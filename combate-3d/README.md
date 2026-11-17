@@ -71,3 +71,82 @@ congela por uma fração de segundo), tremor de câmera e faíscas.
   nomes de ossos, as animações daqui podem ser reaproveitadas.
 - Movimento pelo cenário, esquiva e barra de vida.
 - Sons de impacto e de defesa.
+
+---
+
+# Arena do Guerreiro (combate automático)
+
+O Guerreiro luta sozinho contra ondas de monstros. O jogador configura e evolui o personagem:
+escolhe equipamentos, aprende e equipa habilidades, escolhe as melhorias passivas e ajusta as táticas.
+Abra `arena.html`, com o mesmo servidor do treino. A `galeria.html` mostra todos os modelos e animações.
+
+As mecânicas da vocação seguem o pedido do projeto (prompt do Fighter). Os nomes das habilidades e
+melhorias são próprios, e a interface usa o visual medieval deste projeto: nenhum nome, arte ou
+interface de jogos existentes foi copiado.
+
+## Controles
+
+- O combate é automático. Arraste para girar a câmera e use a roda do mouse ou a pinça para aproximar.
+- `M` ou `Esc` (ou o botão Menu) pausa e abre o menu.
+- Em **Configurações** há uma área de teste: gerar cada tipo de monstro, controlar as ondas, mudar a velocidade,
+  ligar o modo de teste (rank 9 e DP para experimentar tudo) e apagar o progresso.
+
+## Monstros de teste (`src/arena/inimigos.js`)
+
+| Monstro | Peso | O que testa |
+| --- | --- | --- |
+| Goblin | leve | Garra horizontal e agarrão (atravessa a defesa). Pode ser lançado |
+| Goblin Batedor | leve, rápido | Investida com adaga e pedradas (projétil). Uma versão fica em cima da plataforma |
+| Goblin Escudeiro | médio | Escudo frontal que só cai com quebra de guarda; lançada vertical |
+| Goblin Bruto | gigante (2,1x) | Clavada vertical pesada e pisão em área. Imune a provocação e a lançamento; ponto fraco na cabeça |
+| Morcegão | leve, voador | Voa alto e mergulha. Cai quando atingido nas asas ou por cortes ascendentes |
+
+Cada monstro define as próprias partes (hurtboxes), pontos fracos, peso e resistências.
+Antes de cada golpe o monstro avisa (olhos brilham mais forte); o herói lê esse aviso para defender,
+esquivar ou interromper.
+
+## Arquitetura (`src/arena/`)
+
+| Arquivo | Papel |
+| --- | --- |
+| `config.js` | Todos os números de balanceamento |
+| `habilidades.js` | Dados de cada habilidade: custos, alcance, fases (clipe, movimento, hitboxes), cancelamento, uso pela IA |
+| `animGuerreiro.js`, `animGoblin.js` | Clipes de animação gerados pelo solver de poses (`src/poses.js`) |
+| `guerreiro.js` | Controlador do herói: estados, movimento, execução das habilidades por fases, defesa e defesa perfeita, agarrão, salto, queda, stamina |
+| `iaGuerreiro.js` | IA de combate: percepção, escolha de alvo, leitura de ameaças, decisão por utilidade, perfis |
+| `inimigos.js` | Contrato de combate dos inimigos e a IA de cada um |
+| `golpes.js` | Hitbox pela trajetória real da arma (varre a lâmina entre quadros), dano e reações |
+| `corpo.js` | Física simples (aceleração, salto, queda, colisão) e animador em camadas |
+| `mundo.js` | Arena: rochas, caixotes, plataforma, linha de visão |
+| `progressao.js` | XP, DP, rank, desbloqueios, slots, melhorias e salvamento (localStorage) |
+| `equipamentos.js` | Catálogo de itens |
+| `hud.js`, `menu.js`, `icones.js`, `arena.css` | Interface |
+| `audio.js` | Sons sintetizados (placeholders) |
+| `efeitosArena.js` | Faíscas, poeira, clarão, números de dano, rastros |
+
+Para adicionar outra vocação: crie um arquivo de dados de habilidades no mesmo formato e um
+conjunto de clipes. `guerreiro.js` executa qualquer habilidade descrita por fases, e as melhorias
+já ficam registradas por id, independentes da vocação.
+
+## Rank, DP e custos
+
+Escala própria deste projeto, adaptada e não oficial. O rank sobe com a disciplina total ganha
+(limiares em `config.js`). Cada habilidade tem rank mínimo e custo em DP. As versões aprimoradas exigem a
+base aprendida. As variantes especiais exigem rank 9 e o acessório **Anel do Mestre de Armas** equipado.
+
+## Placeholders e limitações
+
+- **Áudio:** sintetizado com Web Audio. Para trocar por arquivos, troque as funções em `SONS` no `audio.js`.
+- **Modelos:** low-poly feitos em código, com skin rígido. Para usar `.glb` do Mixamo/Blender, mantenha os nomes dos ossos.
+- **Escalada:** a escalada de monstros grandes não foi implementada. O Bruto já é marcado como `escalavel`,
+  mas o estado de escalar e o ataque de escalada ainda faltam.
+- **Aliados:** não existem. O Apoio de Salto fica disponível, mas a IA não usa; o perfil Protetor só muda a frequência de provocação.
+- **Fôlego de Carga:** o projeto não tem carregar objetos; a melhoria só vale para o agarrão.
+- **Caminhos:** o desvio de obstáculos é local (sem navmesh). Alvos inalcançáveis são ignorados por alguns segundos.
+
+## Testes
+
+`testes/arena.testes.js` roda 15 cenários com Playwright: detecção, investida, variedade de habilidades,
+bloqueio e defesa perfeita, ausência de defesa perfeita sem o Aparo, recuo com stamina baixa, voador,
+cercado, gigante não lançado, troca de alvo, Impulso e queda controlada, agarrão, quebra de guarda,
+melhorias e progressão. O salvamento e os menus foram testados clicando na interface.

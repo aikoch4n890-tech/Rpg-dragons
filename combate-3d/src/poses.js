@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { criarPersonagem } from './rig.js';
 
-const GUARDA = {
+export const GUARDA = {
   hips: { pos: [0, -0.035, 0], rot: [0, -20, 0] },
   Spine: [4, 8, 0], Spine1: [3, 4, 0], Neck: [0, 4, 0], Head: [-4, 4, 0],
   LeftUpLeg: [-22, 0, 5], LeftLeg: [24, 0, 0], LeftFoot: [-2, 12, 0],
@@ -18,14 +18,14 @@ const GUARDA = {
   armL: { up: [0.35, -0.75, 0.45], fore: [-0.6, 0.25, 0.75], shield: [0.35, 0.1, 1] },
 };
 
-const DEFESA = {
+export const DEFESA = {
   Spine: [8, 6, 0], Spine1: [5, 6, 0], Head: [10, 6, 0],
   armL: { up: [0.3, -0.3, 0.9], fore: [-1, 0.15, 0.1], shield: [0, 0.08, 1] },
   armR: { up: [-0.4, -0.85, -0.05], fore: [0.1, 0.45, 0.9], hand: [0.05, -0.2, 1], blade: [0.05, 1, 0.3] },
 };
 
 // Junta a pose base com as alterações (dois níveis, para trocar só a lâmina, por exemplo).
-function juntar(...poses) {
+export function juntar(...poses) {
   const r = {};
   for (const p of poses) {
     for (const [k, v] of Object.entries(p)) {
@@ -75,28 +75,33 @@ function aplicarPose(rig, pose, posRepousoHips) {
   for (const n of NOMES_EULER) if (pose[n]) ossos[n].rotation.set(...pose[n].map((g) => g * GRAUS));
   raiz.updateMatrixWorld(true);
 
+  // Com espaco: 'tronco', as direções dos braços giram junto com o peito (rolamento, queda).
+  const qTronco = ossos.Spine1.getWorldQuaternion(new THREE.Quaternion());
+  const dir = (spec, v) => (spec.espaco === 'tronco' ? V(v).applyQuaternion(qTronco) : V(v));
   const d = pose.armR;
   if (d) {
-    const lamina = V(d.blade);
-    mirar(ossos.RightArm, V(d.up), lamina);
-    mirar(ossos.RightForeArm, V(d.fore), lamina);
-    mirar(ossos.RightHand, V(d.hand || d.fore), lamina, 'r');
+    const lamina = dir(d, d.blade);
+    mirar(ossos.RightArm, dir(d, d.up), lamina);
+    mirar(ossos.RightForeArm, dir(d, d.fore), lamina);
+    mirar(ossos.RightHand, dir(d, d.hand || d.fore), lamina, 'r');
   }
   const e = pose.armL;
   if (e) {
     // A face do escudo é o +X local do antebraço esquerdo, que corresponde a -(a × r).
     // Com r = a × n, temos a × r = -n: a face aponta para n.
-    const n = V(e.shield);
-    const ante = V(e.fore).addScaledVector(n, -V(e.fore).dot(n)).normalize();
+    const n = dir(e, e.shield);
+    const fore = dir(e, e.fore);
+    const ante = fore.clone().addScaledVector(n, -fore.dot(n)).normalize();
     const r = new THREE.Vector3().crossVectors(ante, n);
-    mirar(ossos.LeftArm, V(e.up), r);
+    mirar(ossos.LeftArm, dir(e, e.up), r);
     mirar(ossos.LeftForeArm, ante, r);
     mirar(ossos.LeftHand, ante, r);
   }
 }
 
 // Cada chave: [tempo, alterações sobre a pose base]
-function clipe(rig, nome, chaves, base = GUARDA) {
+export function clipe(rig, nome, chaves, base = GUARDA) {
+  if (!rig.posRepousoHips) rig.posRepousoHips = rig.ossos.Hips.position.clone();
   const posRepouso = rig.posRepousoHips;
   const nomes = Object.keys(rig.ossos);
   const tempos = chaves.map((c) => c[0]);

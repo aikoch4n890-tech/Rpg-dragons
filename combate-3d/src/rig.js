@@ -19,7 +19,7 @@ export const PALETAS = {
 };
 
 // Gerador pseudoaleatório com semente, para o cabelo e as manchas saírem sempre iguais.
-function aleatorio(semente) {
+export function aleatorio(semente) {
   let s = semente >>> 0;
   return () => {
     s = (s + 0x6d2b79f5) >>> 0;
@@ -32,7 +32,7 @@ function aleatorio(semente) {
 
 // Textura de couro gasto: cor base com manchas claras e escuras.
 const cacheTexturas = new Map();
-function texturaCouro(cor, semente) {
+export function texturaCouro(cor, semente) {
   const chave = `${cor}-${semente}`;
   if (cacheTexturas.has(chave)) return cacheTexturas.get(chave);
   const tam = 256;
@@ -98,16 +98,16 @@ function texturaMadeira() {
   return tex;
 }
 
-function material(cor, extra = {}) {
+export function material(cor, extra = {}) {
   return new THREE.MeshStandardMaterial({ color: cor, roughness: 0.92, metalness: 0, flatShading: true, ...extra });
 }
 
-function materialCouro(cor, semente) {
+export function materialCouro(cor, semente) {
   return material(0xffffff, { map: texturaCouro(cor, semente) });
 }
 
 // Cria uma malha, posiciona e prende no osso indicado.
-function peca(osso, geometria, mat, { pos = [0, 0, 0], rot = [0, 0, 0], escala = [1, 1, 1] } = {}) {
+export function peca(osso, geometria, mat, { pos = [0, 0, 0], rot = [0, 0, 0], escala = [1, 1, 1] } = {}) {
   const m = new THREE.Mesh(geometria, mat);
   m.position.set(...pos);
   m.rotation.set(...rot);
@@ -119,7 +119,7 @@ function peca(osso, geometria, mat, { pos = [0, 0, 0], rot = [0, 0, 0], escala =
 }
 
 // Cilindro entre y = topo e y = base (coordenadas do osso).
-function cilindro(rTopo, rBase, topo, base, lados = 7, extra = {}) {
+export function cilindro(rTopo, rBase, topo, base, lados = 7, extra = {}) {
   const g = new THREE.CylinderGeometry(rTopo, rBase, topo - base, lados, 1, extra.aberto ?? false, extra.inicio ?? 0, extra.arco ?? Math.PI * 2);
   g.translate(0, (topo + base) / 2, 0);
   return g;
@@ -127,7 +127,7 @@ function cilindro(rTopo, rBase, topo, base, lados = 7, extra = {}) {
 
 // Esqueleto em pose de descanso: braços caídos, pernas retas, olhando para +Z.
 // Comprimentos em metros; o personagem tem cerca de 1,82 m.
-const OSSOS = [
+export const OSSOS = [
   // nome, pai, posição relativa ao pai
   ['Hips', null, [0, 0.98, 0]],
   ['Spine', 'Hips', [0, 0.08, 0]],
@@ -148,9 +148,9 @@ const OSSOS = [
   ['RightFoot', 'RightLeg', [0, -0.41, 0]],
 ];
 
-function construirEsqueleto() {
+export function construirEsqueleto(def = OSSOS) {
   const ossos = {};
-  for (const [nome, pai, pos] of OSSOS) {
+  for (const [nome, pai, pos] of def) {
     const b = new THREE.Bone();
     b.name = nome;
     b.position.set(...pos);
@@ -240,7 +240,7 @@ function construirPerna(ossos, lado, M) {
   peca(pe, new THREE.BoxGeometry(0.11, 0.02, 0.25), material(0x241a13), { pos: [0, -0.085, 0.055] });
 }
 
-function construirEspada(mao) {
+export function construirEspada(mao) {
   const espada = new THREE.Group();
   espada.name = 'Espada';
   const aco = new THREE.MeshStandardMaterial({ color: 0xc9ccd0, metalness: 0.85, roughness: 0.3, flatShading: true });
@@ -275,17 +275,17 @@ function construirEspada(mao) {
   return { espada, base, ponta, lamina };
 }
 
-function construirEscudo(antebraco) {
+export function construirEscudo(antebraco, raio = 0.3, deslocX = 0.085) {
   const escudo = new THREE.Group();
   escudo.name = 'Escudo';
   const madeira = new THREE.MeshStandardMaterial({ map: texturaMadeira(), roughness: 0.85, flatShading: true });
   const ferro = new THREE.MeshStandardMaterial({ color: 0x75716b, metalness: 0.75, roughness: 0.4, flatShading: true });
   // Disco com a face voltada para +X (lado de fora do antebraço esquerdo).
-  const disco = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.035, 12), madeira);
+  const disco = new THREE.Mesh(new THREE.CylinderGeometry(raio, raio, 0.035, 12), madeira);
   disco.rotation.z = Math.PI / 2;
   disco.castShadow = true;
   escudo.add(disco);
-  const aro = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.02, 4, 12), ferro);
+  const aro = new THREE.Mesh(new THREE.TorusGeometry(raio, 0.02, 4, 12), ferro);
   aro.rotation.y = Math.PI / 2;
   escudo.add(aro);
   const bossa = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), ferro);
@@ -293,12 +293,12 @@ function construirEscudo(antebraco) {
   bossa.position.x = 0.017;
   escudo.add(bossa);
   for (const ang of [0, Math.PI / 2]) {
-    const faixa = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.58, 0.04), ferro);
+    const faixa = new THREE.Mesh(new THREE.BoxGeometry(0.01, raio * 1.93, 0.04), ferro);
     faixa.position.x = 0.019;
     faixa.rotation.x = ang;
     escudo.add(faixa);
   }
-  escudo.position.set(0.085, -0.15, 0);
+  escudo.position.set(deslocX, -0.15, 0);
   antebraco.add(escudo);
   const centro = new THREE.Object3D(); centro.position.x = 0.05; escudo.add(centro);
   return { escudo, centro };
@@ -350,6 +350,35 @@ export function criarPersonagem(paleta = PALETAS.heroi, semente = 3) {
   construirPerna(ossos, 'Right', M);
   const espada = construirEspada(ossos.RightHand);
   const escudo = construirEscudo(ossos.LeftForeArm);
+  const visual = construirEquipamentoVisual(ossos);
 
-  return { raiz, ossos, espada, escudo };
+  return { raiz, ossos, espada, escudo, visual, materiais: M };
+}
+
+// Peças de armadura opcionais, ligadas pelo menu de equipamento (começam escondidas).
+function construirEquipamentoVisual(ossos) {
+  const ferro = new THREE.MeshStandardMaterial({ color: 0x8a8781, metalness: 0.75, roughness: 0.42, flatShading: true });
+  const malha = new THREE.MeshStandardMaterial({ color: 0x77746f, metalness: 0.6, roughness: 0.6, flatShading: true });
+  const pano = material(0x5b2620, { side: THREE.DoubleSide });
+  const grupo = (osso) => { const g = new THREE.Group(); g.visible = false; osso.add(g); return g; };
+
+  const elmo = grupo(ossos.Head);
+  peca(elmo, new THREE.SphereGeometry(0.125, 9, 5, 0, Math.PI * 2, 0, Math.PI * 0.55), ferro, { pos: [0, 0.15, -0.005], escala: [1, 1, 1.05] });
+  peca(elmo, new THREE.BoxGeometry(0.018, 0.09, 0.02), ferro, { pos: [0, 0.13, 0.125] });
+  peca(elmo, new THREE.TorusGeometry(0.122, 0.012, 3, 10), ferro, { pos: [0, 0.165, -0.005], rot: [Math.PI / 2, 0, 0] });
+
+  const capa = grupo(ossos.Spine1);
+  peca(capa, new THREE.BoxGeometry(0.44, 0.78, 0.015), pano, { pos: [0, -0.16, -0.17], rot: [0.14, 0, 0] });
+
+  const cota = grupo(ossos.Spine1);
+  peca(cota, cilindro(0.212, 0.195, 0.2, -0.02, 9), malha, { escala: [1, 1, 0.72] });
+  peca(cota, cilindro(0.19, 0.19, 0.0, -0.22, 9), malha, { escala: [1, 1, 0.74] });
+
+  const bracais = [grupo(ossos.LeftForeArm), grupo(ossos.RightForeArm)];
+  for (const b of bracais) peca(b, cilindro(0.068, 0.06, -0.08, -0.24, 7), ferro);
+
+  const grevas = [grupo(ossos.LeftLeg), grupo(ossos.RightLeg)];
+  for (const g of grevas) peca(g, cilindro(0.074, 0.068, -0.02, -0.17, 7), ferro, { pos: [0, 0, 0.012] });
+
+  return { elmo, capa, cota, bracais, grevas, pano };
 }

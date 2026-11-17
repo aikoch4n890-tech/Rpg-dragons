@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Galeria de modelos</title>
+  <link rel="stylesheet" href="src/styles.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/addons/" } }
+  </script>
+</head>
+<body>
+  <canvas id="tela" aria-label="Galeria dos modelos 3D"></canvas>
+  <header class="hud"><h1 class="hud__titulo">Galeria de modelos</h1></header>
+  <footer class="controles">
+    <div class="controles__opcoes" id="botoes"></div>
+  </footer>
+  <script type="module" src="src/arena/galeria.js"></script>
+</body>
+</html>

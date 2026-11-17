@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arena do Guerreiro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="src/styles.css">
+  <link rel="stylesheet" href="src/arena/arena.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body class="arena">
+  <canvas id="tela" aria-label="Arena 3D: o Guerreiro luta sozinho contra monstros"></canvas>
+  <div id="camada" class="camada" aria-hidden="true"></div>
+
+  <!-- HUD de combate -->
+  <section id="h-painel" class="painel-heroi" aria-label="Situação do Guerreiro">
+    <div class="painel-heroi__topo"><b id="h-nome">Guerreiro</b><span id="h-nivel"></span></div>
+    <div class="barra barra--vida" title="Vida"><div id="h-vida" class="barra__fill"></div><span id="h-vida-txt" class="barra__txt"></span></div>
+    <div class="barra barra--stamina" title="Stamina"><div id="h-stamina" class="barra__fill"></div><span id="h-stamina-txt" class="barra__txt"></span></div>
+    <div class="barra barra--xp" title="Experiência"><div id="h-xp" class="barra__fill"></div></div>
+    <p class="painel-heroi__estado">Estado: <span id="h-estado">-</span></p>
+  </section>
+
+  <section id="h-alvo" class="painel-alvo" aria-label="Alvo atual" hidden>
+    <span id="h-alvo-nome"></span>
+    <div class="barra barra--alvo"><div id="h-alvo-vida" class="barra__fill"></div></div>
+  </section>
+
+  <div class="topo-direita">
+    <span id="h-onda" class="onda">Onda 1</span>
+    <button id="btn-menu" class="btn btn--menu" type="button">Menu <kbd>M</kbd></button>
+  </div>
+
+  <div id="h-aviso" class="aviso-arena" aria-live="polite"></div>
+  <div id="h-perfeito" class="indicador-perfeito" aria-hidden="true">Defesa perfeita</div>
+  <ul id="h-log" class="log-combate" aria-live="polite"></ul>
+  <div id="h-habs" class="barra-habs" aria-label="Habilidades equipadas"></div>
+
+  <!-- Menu -->
+  <div id="menu" class="menu-arena" hidden>
+    <nav id="menu-nav" class="menu-nav" aria-label="Menu principal"></nav>
+    <section id="menu-conteudo" class="menu-conteudo" aria-live="polite"></section>
+    <button id="menu-fechar" class="btn menu-fechar" type="button" aria-label="Fechar menu">Voltar ao combate</button>
+  </div>
+
+  <script type="module" src="src/arena/arena.js"></script>
+</body>
+</html>
