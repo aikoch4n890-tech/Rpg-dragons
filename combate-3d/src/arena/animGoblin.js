@@ -31,14 +31,15 @@ const GUARDAS = {
 
 // Duração e janelas de cada ataque (em segundos do clipe).
 // telegrafia: até quando o goblin está se preparando (olhos brilham mais forte).
+// contato: quando a arma de fato chega no alvo (chave de impacto) — é o que o herói lê para defender.
 export const ATAQUES_GOBLIN = {
-  garra: { dur: 0.95, telegrafia: 0.42, ativo: [0.46, 0.62], tipo: 'horizontal' },
-  mordida: { dur: 0.9, telegrafia: 0.4, ativo: [0.45, 0.6], tipo: 'horizontal' },
-  investida: { dur: 1.1, telegrafia: 0.38, ativo: [0.45, 0.72], tipo: 'investida' },
-  agarrao: { dur: 1.2, telegrafia: 0.5, ativo: [0.58, 0.8], tipo: 'agarrao' },
+  garra: { dur: 0.95, telegrafia: 0.42, ativo: [0.46, 0.62], contato: 0.54, tipo: 'horizontal' },
+  mordida: { dur: 0.9, telegrafia: 0.4, ativo: [0.45, 0.6], contato: 0.52, tipo: 'horizontal' },
+  investida: { dur: 1.1, telegrafia: 0.38, ativo: [0.45, 0.72], contato: 0.55, tipo: 'investida' },
+  agarrao: { dur: 1.2, telegrafia: 0.5, ativo: [0.58, 0.8], contato: 0.66, tipo: 'agarrao' },
   arremesso: { dur: 1.0, telegrafia: 0.5, solta: 0.6, tipo: 'projetil' },
-  estocada: { dur: 0.9, telegrafia: 0.45, ativo: [0.5, 0.62], tipo: 'vertical' },
-  clava: { dur: 1.5, telegrafia: 0.72, ativo: [0.78, 0.95], tipo: 'vertical' },
+  estocada: { dur: 0.9, telegrafia: 0.45, ativo: [0.5, 0.62], contato: 0.56, tipo: 'vertical' },
+  clava: { dur: 1.5, telegrafia: 0.72, ativo: [0.78, 0.95], contato: 0.86, tipo: 'vertical' },
   pisao: { dur: 1.6, telegrafia: 0.85, impacto: 0.95, tipo: 'area' },
 };
 

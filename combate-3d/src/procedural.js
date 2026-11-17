@@ -23,7 +23,7 @@ class Mola {
 const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3();
 
 export class Procedural {
-  constructor(rig, { escala = 1, tique = 0, olharMax = 55 } = {}) {
+  constructor(rig, { escala = 1, tique = 0, olharMax = 45 } = {}) {
     this.ossos = rig.ossos;
     this.raiz = rig.raiz;
     this.escala = escala;
@@ -35,7 +35,7 @@ export class Procedural {
     this.banca = new Mola(60, 1);
     this.olharYaw = 0; this.olharPitch = 0;
     // molas de impacto (radianos / metros)
-    this.cabecaPitch = new Mola(160, 0.55); this.cabecaYaw = new Mola(160, 0.55);
+    this.cabecaPitch = new Mola(160, 0.85); this.cabecaYaw = new Mola(160, 0.9);
     this.troncoPitch = new Mola(110, 0.6); this.troncoYaw = new Mola(110, 0.6); this.troncoRoll = new Mola(110, 0.6);
     this.quadrilDesce = new Mola(140, 0.7);
     this.proximoTique = 1 + Math.random() * 2;
@@ -53,7 +53,7 @@ export class Procedural {
       costas = _v.z < -0.3;
     }
     if (costas) { this.troncoPitch.v -= f * 0.8; this.cabecaPitch.v -= f * 0.5; return; }
-    if (/cabe/.test(parte)) { this.cabecaPitch.v -= f * 1.6; this.cabecaYaw.v -= lado * f; this.troncoPitch.v -= f * 0.4; }
+    if (/cabe/.test(parte)) { this.cabecaPitch.v -= f * 1.3; this.cabecaYaw.v -= lado * f * 0.4; this.troncoPitch.v -= f * 0.4; }
     else if (/perna|coxa/.test(parte)) { this.quadrilDesce.v -= f * 0.06; this.troncoRoll.v += lado * f * 0.6; this.troncoPitch.v += f * 0.3; }
     else { this.troncoPitch.v += f * 1.1; this.troncoYaw.v -= lado * f * 0.6; this.cabecaPitch.v += f * 0.5; }
   }
@@ -81,7 +81,7 @@ export class Procedural {
       const lx = dx * c - dz * s, lz = dx * s + dz * c;
       yawAlvo = THREE.MathUtils.clamp(Math.atan2(lx, lz), -this.olharMax, this.olharMax) * pesoOlhar;
       pitchAlvo = THREE.MathUtils.clamp(-Math.atan2(dy, Math.hypot(lx, lz)), -0.4, 0.45) * pesoOlhar;
-      if (Math.abs(Math.atan2(lx, lz)) > Math.PI * 0.8) yawAlvo = 0; // alvo atrás: não torce o pescoço
+      if (Math.abs(Math.atan2(lx, lz)) > Math.PI * 0.6) { yawAlvo = this.olharYaw * 0.9; pitchAlvo = 0; } // alvo atrás: a cabeça volta devagar, sem pular
     }
     // Tiques: olhadelas rápidas para os lados
     if (this.tique) {
@@ -89,9 +89,11 @@ export class Procedural {
       if (this.proximoTique <= 0) { this.tiqueYaw = (Math.random() * 2 - 1) * 0.5; this.proximoTique = (0.5 + Math.random() * 1.6) / this.tique; this.cabecaPitch.v += (Math.random() - 0.5) * 3; }
       this.tiqueYaw *= Math.exp(-dt * 2.5);
     }
-    const kOlhar = 1 - Math.exp(-dt * 7);
-    this.olharYaw += (yawAlvo + this.tiqueYaw - this.olharYaw) * kOlhar;
-    this.olharPitch += (pitchAlvo - this.olharPitch) * kOlhar;
+    // Cabeça segue o alvo com suavidade e velocidade máxima (nada de virar de uma vez)
+    const kOlhar = 1 - Math.exp(-dt * 4);
+    const maxPasso = 2.4 * dt; // ~140°/s
+    this.olharYaw += THREE.MathUtils.clamp((yawAlvo + this.tiqueYaw - this.olharYaw) * kOlhar, -maxPasso, maxPasso);
+    this.olharPitch += THREE.MathUtils.clamp((pitchAlvo - this.olharPitch) * kOlhar, -maxPasso, maxPasso);
 
     // Impactos
     const cp = this.cabecaPitch.passo(0, dt), cy = this.cabecaYaw.passo(0, dt);

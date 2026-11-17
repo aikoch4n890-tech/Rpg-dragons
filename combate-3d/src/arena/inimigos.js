@@ -100,8 +100,8 @@ export class Inimigo {
     this.remover = false;
     this.agora = 0;
     this.olhos = this.rig.materiais.olhos;
-    // Camada procedural: goblins olham para o herói com tiques; o gigante quase não tem tiques
-    this.proc = new Procedural(this.rig, { escala: this.escala, tique: this.peso === 'gigante' ? 0.25 : 1 });
+    // Camada procedural: olham para o herói, inclinam com o movimento e sentem os golpes
+    this.proc = new Procedural(this.rig, { escala: this.escala }); // sem tiques aleatórios de cabeça
     this.esquivaRecarga = 0;
     this.ik = new IKPes(this.rig, ctx.mundo, { alturaTornozelo: 0.06, escala: this.escala });
   }
@@ -119,7 +119,7 @@ export class Inimigo {
     if (this.estado !== 'atacando' || !this.ataque) return null;
     const a = this.ataque;
     if (a.def.projetil) return null; // a ameaça passa a existir quando a pedra estiver no ar
-    const tImpacto = a.tempos.ativo ? a.tempos.ativo[0] : (a.tempos.impacto ?? a.tempos.solta);
+    const tImpacto = a.tempos.contato ?? (a.tempos.ativo ? a.tempos.ativo[0] : (a.tempos.impacto ?? a.tempos.solta));
     const t = this.anim.tempoAcao;
     if (t > tImpacto + 0.05) return null;
     return { id: a.id, atacante: this, tipo: a.tempos.tipo, bloqueavel: a.def.bloqueavel, restante: tImpacto - t, alcance: a.def.alcance[1] * (this.def.escala || 1) };

@@ -156,6 +156,23 @@ export class Animador {
     this.sup = null; // camada superior aditiva
     this.aditivos = {};
     this.ritmo = 1;
+    // Pose pura da animação (antes de procedural e IK). O mixer só reescreve um osso quando o valor
+    // da animação muda; se a pose está parada, o que foi somado depois ficaria e se acumularia
+    // (cabeça girando sem parar). Por isso a pose é restaurada antes de cada atualização.
+    this.ossos = [];
+    raiz.traverse((o) => { if (o.isBone) this.ossos.push(o); });
+    this.poseQ = null;
+    this.poseP = null;
+  }
+
+  restaurarPose() {
+    if (!this.poseQ) return;
+    this.ossos.forEach((o, i) => { o.quaternion.copy(this.poseQ[i]); o.position.copy(this.poseP[i]); });
+  }
+
+  guardarPose() {
+    if (!this.poseQ) { this.poseQ = this.ossos.map((o) => o.quaternion.clone()); this.poseP = this.ossos.map((o) => o.position.clone()); return; }
+    this.ossos.forEach((o, i) => { this.poseQ[i].copy(o.quaternion); this.poseP[i].copy(o.position); });
   }
 
   tocar(nome, { fade = 0.08, ts = 1, loop = false, inicio = 0 } = {}) {
@@ -303,6 +320,8 @@ export class Animador {
       s.action.setEffectiveWeight(s.peso);
       if (s.alvo === 0 && s.peso <= 0) { s.action.stop(); this.sup = null; }
     }
+    this.restaurarPose();
     this.mixer.update(dt);
+    this.guardarPose();
   }
 }

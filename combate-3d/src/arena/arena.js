@@ -402,6 +402,7 @@ window.arena = { heroi, ia, inimigos, progresso, placar, gerar, proximaOnda, lim
   // Avança o jogo sem depender da taxa de quadros (testes automatizados)
   simular: (segundos) => { for (let t = 0; t < segundos; t += 1 / 60) simular(1 / 60); },
   passoCamera: (dt) => { atualizarCamera(dt); controles.update(); },
+  renderizar: () => renderer.render(cena, camera),
   reposicionarCamera: (alvo, pos) => { alvoCamera.copy(alvo); controles.target.copy(alvo); camera.position.copy(pos); fracColisao = 1; },
   get onda() { return onda; } };
 proximaOnda();
