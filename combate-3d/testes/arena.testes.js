@@ -7,7 +7,7 @@
 const { chromium } = require('playwright');
 const filtro = process.argv[2] ? process.argv[2].split(',') : null;
 (async () => {
-  const b = await chromium.launch();
+  const b = await chromium.launch({ args: process.env.SWIFTSHADER ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [] });
   const ctxB = await b.newContext({ viewport: { width: 900, height: 600 } });
   const p = await ctxB.newPage();
   const erros = [];
@@ -65,7 +65,7 @@ const filtro = process.argv[2] ? process.argv[2].split(',') : null;
       return p.evaluate(() => {
         T.prep({ aprender: ['aparo'], perfil: 'defensivo', prefs: { prioridadeDefesa: 0.8 } });
         const g = T.gerarEm('goblin', 0, 2);
-        g.def = { ...g.def, ataques: [g.def.ataques[0]] }; // só a garra (bloqueável)
+        g.def = { ...g.def, ataques: g.def.ataques.filter((x) => x.nome === 'Garra') }; // só a garra (bloqueável)
         g.vida = g.vidaMax = 99999;
         arena.simular(50);
         const P = arena.placar;
@@ -75,7 +75,7 @@ const filtro = process.argv[2] ? process.argv[2].split(',') : null;
     async semAparoNaoHaPerfeito() {
       return p.evaluate(() => {
         T.prep({ perfil: 'defensivo' });
-        const g = T.gerarEm('goblin', 0, 2); g.def = { ...g.def, ataques: [g.def.ataques[0]] }; g.vida = g.vidaMax = 99999;
+        const g = T.gerarEm('goblin', 0, 2); g.def = { ...g.def, ataques: g.def.ataques.filter((x) => x.nome === 'Garra') }; g.vida = g.vidaMax = 99999;
         arena.simular(15);
         return { ok: arena.placar.perfeitos === 0 && arena.placar.bloqueados > 0, ...arena.placar, reacoes: undefined, eventos: undefined };
       });
@@ -139,6 +139,11 @@ const filtro = process.argv[2] ? process.argv[2].split(',') : null;
         let maxY = 0;
         for (let i = 0; i < 600; i++) { arena.simular(0.05); maxY = Math.max(maxY, arena.heroi.corpo.pos.y); if (!e.vivo && i > 0 && arena.heroi.corpo.pos.y < 0.1 && maxY > 1) break; }
         arena.simular(3);
+        // Queda controlada: a escada e a rampa deixam descer andando, então empurra o herói pela borda oeste (sem escada)
+        arena.limparInimigos(); arena.ia.update = () => {};
+        const H = arena.heroi; H.reviver(); H.corpo.pos.set(-10.6, 1.25, -2); H.corpo.posAnterior.copy(H.corpo.pos); H.corpo.yaw = -Math.PI / 2; H.ik.zerar();
+        for (let i = 0; i < 120; i++) { H.intencao.vel.set(-1.6, 0); arena.simular(1 / 60); }
+        arena.ia.update = Object.getPrototypeOf(arena.ia).update.bind(arena.ia);
         const r = T.reg();
         return { ok: r.some((x) => x.includes('Impulso')) && maxY > 1.2 && (arena.placar.eventos.queda || 0) > 0, impulsos: r.filter((x) => x.includes('Impulso')).length, quedas: arena.placar.eventos.queda || 0, alturaHeroiMax: maxY.toFixed(2), inimigo: `${e.estado} ${Math.round(e.vida)}`, pos: arena.heroi.corpo.pos.toArray().map((v) => v.toFixed(1)) };
       });
@@ -147,7 +152,7 @@ const filtro = process.argv[2] ? process.argv[2].split(',') : null;
       return p.evaluate(() => {
         T.prep({ melhorias: ['desvencilhar'] });
         const g = T.gerarEm('goblin', 0, 1.3);
-        g.def = { ...g.def, ataques: [g.def.ataques[1]] };
+        g.def = { ...g.def, ataques: g.def.ataques.filter((x) => x.nome === 'Agarrão') };
         g.vida = g.vidaMax = 99999;
         arena.heroi.progresso.dados.escudo = [null, null, null];
         arena.heroi.progresso.dados.espada = [null, null, null];
@@ -193,9 +198,10 @@ const filtro = process.argv[2] ? process.argv[2].split(',') : null;
         const r0 = A.progresso.rank;
         const g = T.gerarEm('goblin', 2, 0); g.vida = 5;
         A.simular(8);
+        window.__dbg = `goblin ${g.estado} vida=${g.vida} heroi=${A.heroi.estado}/${A.heroi.estadoIA} reg=${A.ia.registro.map((r) => r.txt).slice(-6).join(' | ')}`;
         const d = A.progresso.dados;
         const naoPode = A.progresso.podeAprender('giroCompleto');
-        return { ok: d.xp > 0 && d.dpTotal > 0 && !naoPode.ok, xp: d.xp, dp: d.dp, rank: [r0, A.progresso.rank], bloqueio: naoPode.motivo };
+        return { ok: d.xp > 0 && d.dpTotal > 0 && !naoPode.ok, dbg: window.__dbg, xp: d.xp, dp: d.dp, rank: [r0, A.progresso.rank], bloqueio: naoPode.motivo };
       });
     },
   };

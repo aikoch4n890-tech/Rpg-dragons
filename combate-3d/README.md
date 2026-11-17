@@ -143,8 +143,34 @@ base aprendida. As variantes especiais exigem rank 9 e o acessório **Anel do Me
 - **Aliados:** não existem. O Apoio de Salto fica disponível, mas a IA não usa; o perfil Protetor só muda a frequência de provocação.
 - **Fôlego de Carga:** o projeto não tem carregar objetos; a melhoria só vale para o agarrão.
 - **Caminhos:** o desvio de obstáculos é local (sem navmesh). Alvos inalcançáveis são ignorados por alguns segundos.
+- **Transições:** o tranco nas transições ficou no mesmo nível da versão anterior (pior 1% ≈ 21–25° por quadro), com muito mais movimento. O resíduo vem de golpes rápidos que começam a partir da corrida.
+
+## Movimentação e animação
+
+Tudo vale para o herói e para os monstros (mesmo esqueleto e mesmos módulos).
+
+| Módulo | O que faz |
+| --- | --- |
+| `src/poses.js` | Chaves de pose viram curvas (Catmull-Rom amostrada), não interpolação linear: o golpe acelera até o impacto, continua (follow through) e assenta devagar. Mede a passada de cada ciclo. Cria versões aditivas só do tronco |
+| `src/marcha.js` | Gerador de ciclos de passo: contato, passagem e impulso; o pé de apoio recua em ritmo constante, levanta antes de avançar e desce devagar; quadril sobe/desce e gira, tronco gira em contrabalanço, braços balançam. Frente, trás, lado e giro no lugar |
+| `src/arena/corpo.js` (Animador) | Blend tree: guarda ↔ andar ↔ correr ↔ sprint por velocidade, e frente/trás/esquerda/direita por direção. Os ciclos andam na mesma fase e a velocidade de cada um vem da passada medida. Camada superior aditiva (escudo erguido enquanto as pernas andam). Giro com aceleração angular |
+| `src/procedural.js` | Inclinação com aceleração e curvas, cabeça acompanhando o alvo, trancos de impacto por parte do corpo (molas), tiques dos goblins |
+| `src/ik.js` | IK de dois ossos. Pés: travam no chão na fase de apoio, acompanham degraus e rampa, quadril desce quando preciso, nunca atravessam o chão. Mãos: o goblin segura a cintura do herói no agarrão |
+| `src/reacoes.js` | Reações por parte (cabeça, abdômen, pernas, costas), forte, empurrão; o gigante reage mais devagar e só a golpes grandes |
+
+A arena ganhou uma escada de três degraus e uma rampa até a plataforma; degraus de até 35 cm se sobem andando.
+A câmera enquadra também o alvo, se aproxima quando uma rocha entra na frente e tem tremor limitado.
+
+Clipes que podem ser trocados por animações finais (mesmos nomes): `guarda`, `andar`, `correr`, `sprint`, `recuar`,
+`lateralE`, `lateralD`, `virar`, `subindo`, `caindo`, `aterrissar`, `aterrissarPesado`, `danoCabeca`, `danoTronco`,
+`danoPernas`, `danoCostas`, `danoForte`, `empurrado`, `cambalear`, `derrubado`, e os golpes de cada habilidade.
+Se trocar um ciclo, defina `userData.passada` (ou use `medirPassada`) para manter os pés sem escorregar.
 
 ## Testes
+
+`testes/movimento.testes.js` mede: escorregamento dos pés em cada direção e velocidade, escada e rampa sem atravessar
+o chão, descida de degraus sem queda, giro gradual com passinhos, tranco nas transições, reação por parte do corpo,
+defesa andando, mãos no agarrão e câmera sem atravessar rochas.
 
 `testes/arena.testes.js` roda 15 cenários com Playwright: detecção, investida, variedade de habilidades,
 bloqueio e defesa perfeita, ausência de defesa perfeita sem o Aparo, recuo com stamina baixa, voador,

@@ -7,6 +7,9 @@ import { criarGoblin, criarMorcego } from './goblin.js';
 import { ATAQUES_GOBLIN } from './animGoblin.js';
 import { Corpo, Animador } from './corpo.js';
 import { Partes, RastroArma, calcularDano, decidirReacao, anguloAtaque } from './golpes.js';
+import { Procedural } from '../procedural.js';
+import { IKPes, doisOssos } from '../ik.js';
+import { escolherReacao } from '../reacoes.js';
 
 const PARTES_GOBLIN = [
   { nome: 'cabeça', osso: 'Head', offset: [0, 0.12, 0.01], raio: 0.13, mult: 1.35, fraca: true },
@@ -22,6 +25,7 @@ export const TIPOS = {
     xp: 40, dp: 25, ameacaBase: 1, arma: 'garra', partes: PARTES_GOBLIN, distPreferida: 1.0,
     ataques: [
       { nome: 'Garra', clip: 'garra', mult: 1.0, stagger: 25, alcance: [0, 1.25], bloqueavel: true, recarga: 1.6, chance: 3 },
+      { nome: 'Mordida', clip: 'mordida', mult: 1.1, stagger: 20, alcance: [0, 1.15], bloqueavel: true, recarga: 3.2, chance: 2, boca: true, mov: { t0: 0.42, t1: 0.56, frente: 3 } },
       { nome: 'Agarrão', clip: 'agarrao', mult: 0, stagger: 0, alcance: [0.5, 1.5], bloqueavel: false, recarga: 7, chance: 1, mov: { t0: 0.55, t1: 0.75, frente: 3 } },
     ],
   },
@@ -73,7 +77,10 @@ export class Inimigo {
     this.rig.raiz.position.copy(pos);
     ctx.cena.add(this.rig.raiz);
     this.corpo = new Corpo(this.rig.raiz, this.def.raio, this.def.massa);
-    this.anim = new Animador(this.rig.raiz, ctx.clipesGoblin(this.rig.tipoArma), ['guarda', 'andar', 'correr']);
+    this.anim = new Animador(this.rig.raiz, ctx.clipesGoblin(this.rig.tipoArma), {
+      velocidades: { andar: this.def.vel, correr: this.def.velCorrer || this.def.vel * 1.5 },
+      variacao: this.peso === 'gigante' ? 0.04 : 0.16, // goblins: ritmo irregular
+    });
     this.partes = new Partes(this.def.partes, this.rig.ossos, this.escala);
     this.rastroArma = new RastroArma(this.rig.arma.base, this.rig.arma.ponta);
     this.rastroGarra = new RastroArma(this.rig.garraEsq.base, this.rig.garraEsq.ponta);
@@ -93,6 +100,10 @@ export class Inimigo {
     this.remover = false;
     this.agora = 0;
     this.olhos = this.rig.materiais.olhos;
+    // Camada procedural: goblins olham para o herói com tiques; o gigante quase não tem tiques
+    this.proc = new Procedural(this.rig, { escala: this.escala, tique: this.peso === 'gigante' ? 0.25 : 1 });
+    this.esquivaRecarga = 0;
+    this.ik = new IKPes(this.rig, ctx.mundo, { alturaTornozelo: 0.06, escala: this.escala });
   }
 
   get vivo() { return this.estado !== 'morto'; }
@@ -145,6 +156,7 @@ export class Inimigo {
     const corpo = this.corpo;
     corpo.vel.set(0, 0);
     corpo.velExtra.multiplyScalar(Math.exp(-dt * 6));
+    if (this.estado !== 'agarrando' && this.vivo) corpo.semColisaoCorpos = false; // saiu do agarrão (golpe, fuga): volta a colidir
 
     // Olhos brilham mais forte durante a preparação do golpe (aviso visual).
     const preparando = this.estado === 'atacando' && this.ataque && this.anim.tempoAcao < (this.ataque.tempos.telegrafia ?? 0);
@@ -159,10 +171,14 @@ export class Inimigo {
         this.executarAtaque(dt, heroi, controle);
         break;
       case 'dano':
-        if (this.tEstado > 0.4) this.voltar();
+        if (this.tEstado > (this.reacaoDur ?? 0.4)) this.voltar();
+        break;
+      case 'esquivando':
+        if (this.tEstado > 0.08 && this.tEstado < 0.35) { const f = corpo.frente; corpo.velExtra.set(-f.x * 4.5, -f.y * 4.5); }
+        if (this.tEstado > 0.62) this.voltar();
         break;
       case 'cambaleando':
-        if (this.tEstado > 0.9) this.voltar();
+        if (this.tEstado > (this.reacaoDur ?? 0.9)) this.voltar();
         break;
       case 'repelido':
         if (this.tEstado > 1.1) this.voltar();
@@ -188,11 +204,29 @@ export class Inimigo {
 
     const queda = corpo.passo(dt, this.ctx.mundo);
     if (queda > 0 && this.estado === 'livre' && queda > 1) { this.mudar('dano'); this.anim.tocar('dano'); }
-    const v = new THREE.Vector2(corpo.vel.x + corpo.velExtra.x, corpo.vel.y + corpo.velExtra.y);
+    const v = corpo.velReal; // velocidade real: parado contra um obstáculo não anda no lugar
     const f = corpo.frente;
     const local = new THREE.Vector2(v.x * f.y - v.y * f.x, v.x * f.x + v.y * f.y);
-    this.anim.atualizar(dt, this.estado === 'livre' || this.estado === 'bloqueando' ? local : new THREE.Vector2(), { andar: this.def.vel * 0.7, correr: this.def.velCorrer || 4, lateral: 1.5 });
+    const livre = this.estado === 'livre' || this.estado === 'bloqueando';
+    this.anim.atualizar(dt, livre ? local : new THREE.Vector2(), null, livre ? corpo.giroMedido : 0);
+    // Olha para o herói (menos durante golpes e quedas), com tiques e trancos de impacto
+    if (this.vivo) {
+      const deitado = ['derrubado', 'lancado'].includes(this.estado);
+      this.proc.aplicar(dt, { velMundo: v, giro: corpo.giroMedido, alvo: deitado ? null : heroi.partes.lista[0].centro,
+        pesoOlhar: livre ? 1 : this.estado === 'atacando' ? 0.5 : 0.2, inclinar: livre ? 1 : 0.3 });
+    }
     this.rig.raiz.updateMatrixWorld(true);
+    if (this.vivo) {
+      const deitado = ['derrubado', 'lancado', 'esquivando'].includes(this.estado);
+      this.ik.aplicar(dt, { travar: livre && corpo.noChao, apoio: (l) => this.anim.peApoiado(l), ligado: corpo.noChao && !deitado });
+      // IK das mãos no agarrão: cada mão vai ao ombro do herói (de frente: esquerda ↔ direita)
+      if (this.estado === 'agarrando') {
+        const O = this.rig.ossos;
+        for (const lado of ['Left', 'Right']) {
+          doisOssos(O[`${lado}Arm`], O[`${lado}ForeArm`], O[`${lado}Hand`], heroi.pontoAgarrao(lado === 'Left' ? -1 : 1), 1, new THREE.Vector3(-1, 0, 0));
+        }
+      }
+    }
     this.partes.atualizar();
     this.rastroArma.atualizar();
     this.rastroGarra.atualizar();
@@ -222,6 +256,19 @@ export class Inimigo {
     if (this.def.escudo && this.estado === 'livre' && this.agora >= this.guardaQuebradaAte && dist < 4) this.mudar('bloqueando');
     if (this.estado === 'bloqueando' && (dist >= 4 || this.agora < this.guardaQuebradaAte)) this.mudar('livre');
 
+    // Esquiva: pulinho para trás quando o herói prepara um golpe perto (goblins leves e soltos)
+    this.esquivaRecarga -= dt;
+    const preparoHeroi = heroi.estado === 'acao' && heroi.acao?.fase?.hits?.[0] && heroi.acao.t < heroi.acao.fase.hits[0].t0 - 0.06;
+    if (preparoHeroi && heroi.acao !== this.acaoVista) {
+      this.acaoVista = heroi.acao;
+      const chance = this.tipo === 'batedor' ? 0.45 : 0.25;
+      if (this.peso === 'leve' && !this.def.escudo && !this.fixo && dist < 2.3 && this.esquivaRecarga <= 0 && Math.random() < chance) {
+        this.esquivaRecarga = 3;
+        this.mudar('esquivando');
+        this.anim.tocar('esquiva', { fade: 0.05 });
+        return;
+      }
+    }
     this.esperaDecisao -= dt * (provocado ? 2 : 1);
     const frenteOk = anguloAtaque(this, alvo) < 35;
     if (this.esperaDecisao <= 0 && frenteOk && this.podeAtacar(controle) && heroi.estado !== 'agarrado') {
@@ -271,8 +318,9 @@ export class Inimigo {
     }
     // Janela ativa: varre a arma (e a outra garra) contra as partes do herói.
     if (tempos.ativo && !a.acertou && t >= tempos.ativo[0] && t <= tempos.ativo[1] && heroi.vivo) {
-      const pontos = this.rastroArma.pontos(0, 4).concat(this.rastroGarra.pontos(0, 2));
-      const hit = heroi.partes.atingida(pontos, 0.03);
+      let hit;
+      if (a.def.boca) hit = heroi.partes.esferaAtingida(this.rig.boca.getWorldPosition(new THREE.Vector3()), 0.12);
+      else hit = heroi.partes.atingida(this.rastroArma.pontos(0, 4).concat(this.rastroGarra.pontos(0, 2)), 0.03);
       if (hit) {
         a.acertou = true;
         if (tempos.tipo === 'agarrao') {
@@ -313,19 +361,20 @@ export class Inimigo {
   }
 
   manterAgarrao(dt, heroi) {
+    this.corpo.semColisaoCorpos = heroi.estado === 'agarrado'; // colado no herói: sem empurrar um ao outro
     // Fica na frente do herói, preso a ele.
     const f = heroi.corpo.frente;
-    this.corpo.pos.x = heroi.corpo.pos.x + f.x * 0.55;
-    this.corpo.pos.z = heroi.corpo.pos.z + f.y * 0.55;
+    this.corpo.pos.x = heroi.corpo.pos.x + f.x * 0.42;
+    this.corpo.pos.z = heroi.corpo.pos.z + f.y * 0.42;
     this.corpo.yaw = heroi.corpo.yaw + Math.PI;
-    if (heroi.estado !== 'agarrado') { this.mudar('cambaleando'); this.anim.tocar('cambalear'); }
+    if (heroi.estado !== 'agarrado') { this.corpo.semColisaoCorpos = false; this.mudar('cambaleando'); this.anim.tocar('cambalear'); }
   }
 
   repelir() {
     this.ctx.controle.atacando.delete(this);
     this.ataque = null;
     this.mudar('repelido');
-    this.anim.tocar('repelido', { fade: 0.04 });
+    this.anim.tocar('repelido', { fade: 0.08 });
     const f = this.corpo.frente;
     this.corpo.velExtra.set(-f.x * 3, -f.y * 3);
   }
@@ -362,7 +411,7 @@ export class Inimigo {
         this.guardaQuebradaAte = this.agora + 3;
         this.staggerAcum = this.resistStagger;
         this.mudar('cambaleando');
-        this.anim.tocar('cambalear', { fade: 0.04 });
+        this.anim.tocar('cambalear', { fade: 0.08 });
         this.ctx.audio?.tocar('bloqueio', this.centro);
         return { bloqueado: false, quebrouGuarda: true, dano: 0, parte, reacao: 'cambaleando', alvo: this };
       }
@@ -370,6 +419,7 @@ export class Inimigo {
       mult *= 0.15;
       stagger *= 0.35;
     }
+    this.proc.impulso(bloqueado ? 'tronco' : parte.nome, g.origem, Math.min(1.2, (bloqueado ? 0.15 : 0.35) + stagger / this.resistStagger) * (this.peso === 'gigante' ? 0.35 : 1));
     if (this.estado === 'derrubado' && g.bonusCaido) mult *= g.bonusCaido;
     if (this.vulneravel) mult *= 1.15;
     const dano = calcularDano(g.forca, mult, 1, this.def.defesa);
@@ -378,7 +428,7 @@ export class Inimigo {
     let reacao = 'nenhuma';
     if (this.vida <= 0) {
       this.vida = 0;
-      this.morrer();
+      this.morrer(g);
       reacao = 'morte';
     } else if (!bloqueado && this.estado !== 'preso' && this.estado !== 'lancado') {
       reacao = decidirReacao(this, g);
@@ -402,24 +452,42 @@ export class Inimigo {
     this.ctx.controle.atacando.delete(this);
     this.ataque = null;
     const dir = new THREE.Vector2(this.corpo.pos.x - g.origem.x, this.corpo.pos.z - g.origem.z).normalize();
-    if (reacao === 'leve') { this.mudar('dano'); this.anim.tocar('dano', { fade: 0.04 }); this.corpo.velExtra.set(dir.x * 1.2, dir.y * 1.2); }
-    if (reacao === 'cambaleando') { this.mudar('cambaleando'); this.anim.tocar('cambalear', { fade: 0.04 }); this.corpo.velExtra.set(dir.x * 2.5, dir.y * 2.5); this.staggerAcum *= 0.5; }
-    if (reacao === 'derrubado') { this.mudar('derrubado'); this.anim.tocar('derrubado', { fade: 0.04 }); this.corpo.velExtra.set(dir.x * 3.5, dir.y * 3.5); this.staggerAcum = 0; }
+    const parte = g.parte?.nome || 'tronco', angulo = anguloAtaque(this, g.origem);
+    const gigante = this.peso === 'gigante';
+    if (reacao === 'leve') {
+      const clip = escolherReacao(parte, angulo, 'leve');
+      this.mudar('dano'); this.reacaoDur = this.anim.clipes[clip].duration * 0.9;
+      this.anim.tocar(clip, { fade: 0.08 }); this.corpo.velExtra.set(dir.x * 1.2, dir.y * 1.2);
+    }
+    if (reacao === 'cambaleando') {
+      // Pancada de escudo/trombada empurra (tropeça para trás); golpe muito forte recua; senão cambaleia.
+      const empurrao = !gigante && (g.fonte === 'escudo' || g.fonte === 'corpo');
+      const clip = empurrao ? 'empurrado' : !gigante && g.stagger >= this.resistStagger * 1.6 ? 'danoForte' : 'cambalear';
+      const ts = gigante ? 0.75 : 1; // o gigante reage mais devagar, com peso
+      this.mudar('cambaleando'); this.reacaoDur = this.anim.clipes[clip].duration / ts * 0.95;
+      this.anim.tocar(clip, { fade: 0.08, ts });
+      const v = gigante ? 0.6 : empurrao ? 3.6 : 2.5;
+      this.corpo.velExtra.set(dir.x * v, dir.y * v); this.staggerAcum *= 0.5;
+    }
+    if (reacao === 'derrubado') { this.mudar('derrubado'); this.anim.tocar('derrubado', { fade: 0.08 }); this.corpo.velExtra.set(dir.x * 3.5, dir.y * 3.5); this.staggerAcum = 0; }
     if (reacao === 'lancado') {
       this.mudar('lancado');
-      this.anim.tocar('lancado', { fade: 0.04, loop: true });
+      this.anim.tocar('lancado', { fade: 0.08, loop: true });
       this.corpo.pular(g.forcaLancar || 6);
       this.corpo.velExtra.set(dir.x * 2, dir.y * 2);
       this.staggerAcum = 0;
     }
   }
 
-  morrer() {
+  morrer(g = null) {
     this.ctx.controle.atacando.delete(this);
     if (this.estado === 'agarrando') this.ctx.heroiSolto?.();
     this.ataque = null;
     this.mudar('morto');
-    this.anim.tocar('morte', { fade: 0.06 });
+    // Golpe de frente derruba para trás; pelas costas ou de lado, cai para a frente
+    const deFrente = g && anguloAtaque(this, g.origem) < 80;
+    this.anim.tocar(deFrente ? 'morteTras' : 'morte', { fade: 0.06 });
+    if (g) { const d = new THREE.Vector2(this.corpo.pos.x - g.origem.x, this.corpo.pos.z - g.origem.z).normalize(); this.corpo.velExtra.set(d.x * 1.5, d.y * 1.5); }
     this.olhos.emissiveIntensity = 0;
     this.corpo.semColisaoCorpos = true;
   }

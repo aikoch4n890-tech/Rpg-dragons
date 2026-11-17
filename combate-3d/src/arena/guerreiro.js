@@ -8,6 +8,9 @@ import { Corpo, Animador } from './corpo.js';
 import { Partes, RastroArma, calcularDano, anguloAtaque } from './golpes.js';
 import { POR_ID, ATAQUES_BASICOS } from './habilidades.js';
 import { ITENS } from './equipamentos.js';
+import { Procedural } from '../procedural.js';
+import { IKPes } from '../ik.js';
+import { escolherReacao } from '../reacoes.js';
 
 const PARTES_HEROI = [
   { nome: 'cabeça', osso: 'Head', offset: [0, 0.13, 0.01], raio: 0.13, mult: 1.2 },
@@ -33,7 +36,10 @@ export class Guerreiro {
     this.anim = new Animador(this.rig.raiz, ctx.clipes);
     this.partes = new Partes(PARTES_HEROI, this.rig.ossos);
     this.rastro = new RastroArma(this.rig.espada.base, this.rig.espada.ponta);
-    this.intencao = { vel: new THREE.Vector2(), olhar: null, correr: false };
+    this.proc = new Procedural(this.rig);
+    this.ik = new IKPes(this.rig, ctx.mundo, { alturaTornozelo: 0.09 });
+    this.olharAlvo = null; // a IA aponta o inimigo que o herói acompanha com a cabeça
+    this.intencao = { vel: new THREE.Vector2(), olhar: null, correr: false, sprint: false };
     this.estado = 'livre';
     this.tEstado = 0;
     this.acao = null;
@@ -148,10 +154,10 @@ export class Guerreiro {
     if (sim && this.estado === 'livre') {
       this.mudar('defesa');
       this.inicioDefesa = this.agora;
-      this.anim.tocar('defesa', { fade: 0.06 });
+      this.anim.tocarSuperior('defesa', { fade: 0.06 }); // só o tronco: as pernas continuam andando
     } else if (!sim && this.estado === 'defesa') {
       this.mudar('livre');
-      this.anim.soltar(0.12);
+      this.anim.soltarSuperior(0.14);
     }
   }
 
@@ -205,7 +211,7 @@ export class Guerreiro {
 
   // ---------- Execução de ações por fases ----------
   iniciarAcao(acao) {
-    if (this.estado === 'defesa') this.anim.soltar(0.05);
+    if (this.estado === 'defesa') this.anim.soltarSuperior(0.06);
     acao.i = -1;
     acao.acertouAlgum = false;
     this.acao = acao;
@@ -262,7 +268,9 @@ export class Guerreiro {
     if (this.estado !== 'acao') return;
     const clip = this.ctx.clipes[f.clip];
     a.durFase = f.fimEm ?? f.dur ?? clip.duration;
-    this.anim.tocar(f.clip, { ts: f.ts || 1, loop: CLIPES_SEGURAR.has(f.clip) && f.clip !== 'arranque' && f.clip !== 'pulo', fade: a.i === 0 ? 0.08 : 0.05 });
+    // Ciclos de passo (investida) entram na mesma fase da caminhada atual: as pernas não pulam
+    const inicio = clip.userData?.passada ? this.anim.fase * clip.duration : 0;
+    this.anim.tocar(f.clip, { ts: f.ts || 1, loop: CLIPES_SEGURAR.has(f.clip) && f.clip !== 'pulo', fade: a.i === 0 ? 0.12 + 0.025 * this.corpo.velReal.length() : 0.07, inicio }); // entrada com antecipação, sem tranco
     if (f.efeitoNoInicio?.buff) this.buffs[f.efeitoNoInicio.buff] = { ate: this.agora + f.efeitoNoInicio.duracao, reducaoStagger: f.efeitoNoInicio.reducaoStagger };
     if (f.preso === false && a.presa) { /* golpe final na presa acontece pelos hits com fonte 'presa' */ }
     if (a.def.id === 'carregado' && a.i === 0) this.ctx.audio?.tocar('carregar', this.corpo.pos);
@@ -303,6 +311,12 @@ export class Guerreiro {
       if (m.cima && corpo.noChao) corpo.pular(m.cima);
     }
     if (f.paraNoAlvo && a.alvo && this.distanciaAte(a.alvo) < 0.3) { a.t = Math.max(a.t, a.durFase); }
+    // Ciclos de corrida tocados como ação (investida): passos no ritmo da velocidade real
+    if (this.ctx.clipes[f.clip]?.userData?.passada && this.anim.acao) {
+      const alvoTs = THREE.MathUtils.clamp(corpo.velExtra.length() / this.ctx.clipes[f.clip].userData.passada, 0.6, 2.2);
+      const ts = this.anim.acao.action.timeScale;
+      this.anim.velocidadeAcao = ts + (alvoTs - ts) * (1 - Math.exp(-dt * 10)); // passos aceleram junto com a arrancada
+    }
     if (f.giro && a.t >= f.giro.t0 && a.t <= f.giro.t1) corpo.yaw += THREE.MathUtils.degToRad(f.giro.graus) * (dt * ts) / (f.giro.t1 - f.giro.t0);
     if (f.rastro) this.ctx.efeitos?.poeiraPes(corpo.pos);
     // Efeitos com tempo (provocação)
@@ -392,7 +406,7 @@ export class Guerreiro {
       if (aparo && this.estado === 'defesa' && this.agora - this.inicioDefesa <= janela) {
         this.stamina = Math.min(this.stats.staminaMax, this.stamina + D.perfeitaRecompensaStamina);
         this.contraAte = this.agora + D.contraJanela;
-        this.anim.tocar('aparo', { fade: 0.03 });
+        this.anim.tocarSuperior('aparo', { fade: 0.06 });
         this.progresso.dados.estatisticas.defesasPerfeitas++;
         this.ctx.aoDefender?.(this, g, 'perfeito');
         return 'perfeito';
@@ -401,14 +415,17 @@ export class Guerreiro {
       const eficiencia = this.acao?.fase?.defesaContinua?.eficiencia ?? 1;
       this.gastar(dano * D.custoStaminaPorDano * this.stats.estabilidadeEscudo * eficiencia * (g.atacante?.peso === 'gigante' ? 1.6 : 1));
       this.vida -= Math.round(dano * (1 - D.reducaoFrontal));
-      if (this.estado === 'defesa') this.anim.tocar('defesaImpacto', { fade: 0.03 });
+      if (this.estado === 'defesa') this.anim.tocarSuperior('defesaImpacto', { fade: 0.06 });
+      this.proc.impulso('tronco', g.origem, Math.min(0.5, dano / 120)); // o braço absorve, o tronco sente um pouco
       this.ctx.aoDefender?.(this, g, 'bloqueado');
       if (this.vida <= 0) this.morrer();
       else if (this.estado === 'exausto') this.ctx.evento?.('guardaQuebrada');
       return 'bloqueado';
     }
-    // Acertou
+    // Acertou: descobre a parte atingida (para a reação e o tranco)
     const dano = calcularDano(g.forca, g.mult, 1, this.stats.defesa);
+    const parte = g.ponto ? this.partes.lista.reduce((m, p) => (p.centro.distanceTo(g.ponto) < m.centro.distanceTo(g.ponto) ? p : m)) : this.partes.lista[1];
+    this.proc.impulso(parte.nome, g.origem, Math.min(1.2, 0.3 + g.stagger / this.stats.resistStagger));
     this.vida -= dano;
     const reducao = this.buffs.firme && this.buffs.firme.ate > this.agora ? this.buffs.firme.reducaoStagger : 0;
     this.staggerAcum += g.stagger * (1 - reducao);
@@ -417,21 +434,37 @@ export class Guerreiro {
     const res = this.stats.resistStagger;
     const emHabilidade = this.estado === 'acao' && this.acao?.tipo === 'habilidade';
     if (this.estado === 'agarrado') return 'acertou';
-    if (this.staggerAcum >= res * 2 || (g.atacante?.peso === 'gigante' && g.stagger >= res * 2.5 * (1 - reducao))) this.reagir('derrubado');
-    else if (this.staggerAcum >= res) this.reagir('cambalear');
-    else if (!emHabilidade && g.stagger * (1 - reducao) >= res * 0.3) this.reagir('dano');
+    const angulo = anguloAtaque(this, g.origem);
+    const efetivo = g.stagger * (1 - reducao);
+    const longe = new THREE.Vector2(this.corpo.pos.x - g.origem.x, this.corpo.pos.z - g.origem.z).normalize();
+    if (this.staggerAcum >= res * 2 || (g.atacante?.peso === 'gigante' && efetivo >= res * 2.5)) this.reagir('derrubado', longe, 3.5);
+    else if (g.tipo === 'area' || (g.atacante?.peso === 'gigante' && efetivo >= res * 1.2)) this.reagir('empurrado', longe, 3.2); // empurrão: tropeça para trás
+    else if (this.staggerAcum >= res) this.reagir('cambalear', longe, 2);
+    else if (!emHabilidade && efetivo >= res * 0.65) this.reagir(escolherReacao(parte.nome, angulo, 'forte'), longe, 1.6);
+    else if (!emHabilidade && efetivo >= res * 0.3) this.reagir(escolherReacao(parte.nome, angulo, 'leve'), longe, 0.8);
     return 'acertou';
   }
 
-  reagir(tipo) {
+  // empurrao: direção (2D) e velocidade inicial do recuo causado pelo golpe
+  reagir(tipo, empurrao = null, vel = 0) {
     if (this.acao?.presa) this.acao.presa.soltarPreso?.();
+    if (this.estado === 'defesa') this.anim.soltarSuperior(0.05);
+    if (empurrao) this.corpo.velExtra.set(empurrao.x * vel, empurrao.y * vel);
     this.acao = null;
     this.mudar('reacao');
     this.reacao = tipo;
-    const dur = { dano: 0.4, cambalear: 0.9, derrubado: 1.85, aterrissar: 0.3, rolamento: 0.85 }[tipo];
+    const dur = { dano: 0.4, cambalear: 0.9, derrubado: 1.85, aterrissar: 0.3, aterrissarPesado: 0.6, rolamento: 0.85 }[tipo] ?? this.ctx.clipes[tipo]?.duration ?? 0.5;
     this.reacaoAte = dur;
-    this.anim.tocar(tipo, { fade: 0.04 });
-    if (tipo !== 'dano') this.staggerAcum = 0;
+    this.anim.tocar(tipo, { fade: 0.09 }); // rápido, mas sem tranco
+    if (!/^dano/.test(tipo)) this.staggerAcum = 0;
+  }
+
+  // Onde as mãos de quem agarra seguram: lados da cintura (lado: +1 esquerda do herói, -1 direita)
+  pontoAgarrao(lado) {
+    const p = this.rig.ossos.Spine.getWorldPosition(new THREE.Vector3()); // cintura: ao alcance de um goblin
+    const l = this.corpo.lado;
+    const f = this.corpo.frente;
+    return p.set(p.x + l.x * 0.17 * lado + f.x * 0.13, p.y + 0.04, p.z + l.y * 0.17 * lado + f.y * 0.13); // superfície da cintura
   }
 
   serAgarrado(inimigo) {
@@ -472,6 +505,7 @@ export class Guerreiro {
     this.staggerAcum = 0;
     this.acao = null;
     this.corpo.pos.set(0, 0, 0);
+    this.ik.zerar();
     this.mudar('livre');
     this.anim.soltar(0.1);
   }
@@ -505,7 +539,7 @@ export class Guerreiro {
       case 'defesa': {
         const fator = this.fatorCarga * (this.estado === 'defesa' ? 0.5 : 1);
         velDesejada.copy(this.intencao.vel).multiplyScalar(fator);
-        const max = (this.intencao.correr ? G.velCorrer : G.velAndar) * fator;
+        const max = (this.intencao.sprint ? G.velSprint : this.intencao.correr ? G.velCorrer : G.velAndar) * fator;
         if (velDesejada.length() > max) velDesejada.setLength(max);
         const giro = G.giroVel * (this.fatorCarga * 0.5 + 0.5);
         if (this.intencao.olhar) corpo.olharPara(this.intencao.olhar.x, this.intencao.olhar.z, giro, dt);
@@ -522,13 +556,15 @@ export class Guerreiro {
           this.saltoVel = corpo.velExtra.clone();
           this.acao = null;
           this.mudar('salto');
-          this.anim.tocar('pulo', { fade: 0.08 });
+          this.anim.tocar('subindo', { fade: 0.08, loop: true });
           break;
         }
         this.executarFase(dt);
         break;
       case 'salto':
         if (this.saltoVel) corpo.velExtra.copy(this.saltoVel);
+        // Subida → queda: troca de pose quando a velocidade vertical inverte
+        if (!this.acao && corpo.vy < 0.5 && this.anim.nomeAcao === 'subindo') this.anim.tocar('caindo', { fade: 0.22, loop: true });
         if (this.acao) this.executarFase(dt);
         break;
       case 'reacao':
@@ -573,10 +609,22 @@ export class Guerreiro {
 
     // Animação de locomoção com a velocidade no espaço local (x = esquerda, y = frente)
     const f = corpo.frente;
-    const v = this.velAtual;
+    const v = corpo.velReal;
     const local = new THREE.Vector2(v.x * f.y - v.y * f.x, v.x * f.x + v.y * f.y);
-    this.anim.atualizar(dt, this.estado === 'livre' || this.estado === 'defesa' ? local : new THREE.Vector2(), { andar: G.velAndar, correr: G.velCorrer, lateral: G.velLateral });
+    this.anim.atualizar(dt, this.estado === 'livre' || this.estado === 'defesa' ? local : new THREE.Vector2(), { andar: G.velAndar, correr: G.velCorrer, sprint: G.velSprint }, this.estado === 'livre' || this.estado === 'defesa' ? corpo.giroMedido : 0);
+    // Camada procedural: inclinação com aceleração/curva, olhar no alvo, trancos de impacto
+    const caido = this.estado === 'reacao' && ['derrubado', 'rolamento'].includes(this.reacao);
+    this.proc.aplicar(dt, {
+      velMundo: corpo.velReal,
+      giro: corpo.giroMedido,
+      alvo: this.olharAlvo && !caido ? this.olharAlvo : null,
+      pesoOlhar: this.estado === 'acao' ? 0.45 : this.estado === 'livre' || this.estado === 'defesa' ? 1 : 0.3,
+      inclinar: this.estado === 'livre' || this.estado === 'defesa' ? 1 : 0.3,
+    });
     this.rig.raiz.updateMatrixWorld(true);
+    // IK dos pés: trava o pé de apoio na locomoção e adapta ao desnível do chão
+    const locomovendo = this.estado === 'livre' || this.estado === 'defesa';
+    this.ik.aplicar(dt, { travar: locomovendo && corpo.noChao, apoio: (l) => this.anim.peApoiado(l), ligado: corpo.noChao && !caido });
     this.partes.atualizar();
     this.rastro.atualizar();
     this.detectarAcertos();
@@ -596,7 +644,8 @@ export class Guerreiro {
       if (this.estado === 'acao' && !this.acao?.noAr) return;
       this.acao = null;
       if (rola) { this.reagir('rolamento'); this.ctx.evento?.('queda'); this.ctx.audio?.tocar('queda', this.corpo.pos); }
-      else if (queda > 0.4) { this.reagir('aterrissar'); this.ctx.audio?.tocar('passo', this.corpo.pos); }
+      else if (queda > 0.85) { this.reagir('aterrissarPesado'); this.ctx.audio?.tocar('queda', this.corpo.pos); }
+      else if (queda > 0.3) { this.reagir('aterrissar'); this.ctx.audio?.tocar('passo', this.corpo.pos); }
       else { this.mudar('livre'); this.anim.soltar(0.1); }
     }
   }

@@ -99,29 +99,117 @@ function aplicarPose(rig, pose, posRepousoHips) {
   }
 }
 
-// Cada chave: [tempo, alterações sobre a pose base]
-export function clipe(rig, nome, chaves, base = GUARDA) {
+// Curvas de tempo por segmento (marcadas na chave de chegada: [t, pose, 'acelera'])
+const CURVAS = {
+  linear: (u) => u,
+  acelera: (u) => u * u * (1.6 - 0.6 * u), // sai devagar e chega rápido (golpe até o impacto)
+  freia: (u) => 1 - (1 - u) * (1 - u), // sai rápido e assenta devagar (recuperação)
+  suave: (u) => u * u * (3 - 2 * u), // começa e termina devagar (antecipação segurada)
+};
+
+// Catmull-Rom componente a componente (passa pelas chaves com velocidade contínua).
+function catmull(p0, p1, p2, p3, u) {
+  const u2 = u * u, u3 = u2 * u;
+  return 0.5 * (2 * p1 + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2 + (-p0 + 3 * p1 - 3 * p2 + p3) * u3);
+}
+
+// Cada chave: [tempo, alterações sobre a pose base, curva opcional do segmento que termina nela]
+// opcoes.ciclo: o clipe é um ciclo (última chave = primeira), a curva fecha sem emenda.
+// opcoes.amostras: amostras por segundo da curva gerada (padrão 40).
+export function clipe(rig, nome, chaves, base = GUARDA, opcoes = {}) {
   if (!rig.posRepousoHips) rig.posRepousoHips = rig.ossos.Hips.position.clone();
   const posRepouso = rig.posRepousoHips;
   const nomes = Object.keys(rig.ossos);
-  const tempos = chaves.map((c) => c[0]);
-  const quats = Object.fromEntries(nomes.map((n) => [n, []]));
-  const posHips = [];
+  const ciclo = !!opcoes.ciclo;
+  // 1. Poses-chave resolvidas
+  const poses = [];
   const anterior = {};
   for (const [, mudancas] of chaves) {
     aplicarPose(rig, juntar(base, mudancas), posRepouso);
+    const pose = { q: {}, hips: rig.ossos.Hips.position.clone() };
     for (const n of nomes) {
       const q = rig.ossos[n].quaternion.clone();
       // Mantém o mesmo hemisfério do quaternion anterior para interpolar pelo caminho curto.
       if (anterior[n] && anterior[n].dot(q) < 0) q.set(-q.x, -q.y, -q.z, -q.w);
       anterior[n] = q;
-      quats[n].push(q.x, q.y, q.z, q.w);
+      pose.q[n] = q;
     }
-    posHips.push(...rig.ossos.Hips.position.toArray());
+    poses.push(pose);
   }
-  const trilhas = nomes.map((n) => new THREE.QuaternionKeyframeTrack(`${n}.quaternion`, tempos, quats[n]));
+  // 2. Amostra a curva entre as chaves (antes era interpolação linear: movimento mecânico)
+  const n = chaves.length;
+  const vizinho = (i) => {
+    if (ciclo) { const m = n - 1; return ((i % m) + m) % m; }
+    return Math.min(n - 1, Math.max(0, i)); // nas pontas repete a chave: chega e sai devagar
+  };
+  const tempos = [chaves[0][0]];
+  const quats = Object.fromEntries(nomes.map((k) => [k, [...poses[0].q[k].toArray()]]));
+  const posHips = [...poses[0].hips.toArray()];
+  const taxa = opcoes.amostras ?? 40;
+  const q = new THREE.Quaternion();
+  for (let i = 0; i < n - 1; i++) {
+    const t0 = chaves[i][0], t1 = chaves[i + 1][0];
+    const tFim = chaves[i + 1][0];
+    const marcaDe = (k) => chaves[k]?.[2] || (opcoes.acelera?.includes(chaves[k]?.[0]) ? 'acelera' : opcoes.freia?.includes(chaves[k]?.[0]) ? 'freia' : null);
+    // Depois de um impacto (segmento que acelera), o seguinte desacelera a partir da velocidade alta:
+    // continuidade do golpe (follow through) em vez de recomeçar o movimento do zero.
+    const marca = marcaDe(i + 1) || (i > 0 && marcaDe(i) === 'acelera' ? 'freia' : null);
+    // Ações começam devagar (antecipação) e assentam devagar no fim; ciclos seguem contínuos
+    const curva = CURVAS[marca || (!ciclo && i === 0 && n > 2 ? 'suave' : !ciclo && i === n - 2 ? 'freia' : 'linear')];
+    const passos = Math.max(2, Math.ceil((t1 - t0) * taxa));
+    const a = poses[vizinho(i - 1)], b = poses[i], c = poses[i + 1], d = poses[vizinho(i + 2)];
+    for (let s = 1; s <= passos; s++) {
+      const uTempo = s / passos;
+      const u = curva(uTempo);
+      tempos.push(t0 + (t1 - t0) * uTempo);
+      for (const k of nomes) {
+        const [qa, qb, qc, qd] = [a.q[k], b.q[k], c.q[k], d.q[k]].map((x, j, arr) => (j !== 1 && x.dot(arr[1]) < 0 ? x.clone().set(-x.x, -x.y, -x.z, -x.w) : x));
+        q.set(catmull(qa.x, qb.x, qc.x, qd.x, u), catmull(qa.y, qb.y, qc.y, qd.y, u), catmull(qa.z, qb.z, qc.z, qd.z, u), catmull(qa.w, qb.w, qc.w, qd.w, u)).normalize();
+        quats[k].push(q.x, q.y, q.z, q.w);
+      }
+      posHips.push(catmull(a.hips.x, b.hips.x, c.hips.x, d.hips.x, u), catmull(a.hips.y, b.hips.y, c.hips.y, d.hips.y, u), catmull(a.hips.z, b.hips.z, c.hips.z, d.hips.z, u));
+    }
+  }
+  const trilhas = nomes.map((k) => new THREE.QuaternionKeyframeTrack(`${k}.quaternion`, tempos, quats[k]));
   trilhas.push(new THREE.VectorKeyframeTrack('Hips.position', tempos, posHips));
   return new THREE.AnimationClip(nome, tempos[tempos.length - 1], trilhas);
+}
+
+// Mede a "passada" de um ciclo: com que velocidade o pé de apoio se move para trás em relação ao
+// corpo (m/s, com o clipe em velocidade 1). O animador usa isso para casar a velocidade do ciclo com a
+// velocidade real e o pé não escorregar no chão. eixo: 'z' (frente) ou 'x' (lado).
+export function medirPassada(rig, clip, eixo = 'z') {
+  // O pé de apoio percorre toda a sua amplitude (frente → trás) em meio ciclo:
+  // passada = 2 × amplitude / duração. Média dos dois pés.
+  const mixer = new THREE.AnimationMixer(rig.raiz);
+  const acao = mixer.clipAction(clip);
+  acao.play();
+  const pes = [rig.ossos.LeftFoot, rig.ossos.RightFoot];
+  const n = 90;
+  const faixas = pes.map(() => [Infinity, -Infinity]);
+  const p = new THREE.Vector3();
+  for (let i = 0; i <= n; i++) {
+    mixer.setTime((i / n) * clip.duration);
+    rig.raiz.updateMatrixWorld(true);
+    pes.forEach((pe, k) => { pe.getWorldPosition(p); faixas[k][0] = Math.min(faixas[k][0], p[eixo]); faixas[k][1] = Math.max(faixas[k][1], p[eixo]); });
+  }
+  acao.stop();
+  mixer.uncacheRoot(rig.raiz);
+  const amp = faixas.reduce((s, f) => s + (f[1] - f[0]), 0) / faixas.length;
+  return Math.max(0.05, (2 * amp) / clip.duration);
+}
+
+// Ossos da parte de cima do corpo (para camadas que não mexem nas pernas).
+export const OSSOS_SUPERIORES = ['Spine', 'Spine1', 'Neck', 'Head', 'LeftArm', 'LeftForeArm', 'LeftHand', 'RightArm', 'RightForeArm', 'RightHand'];
+
+// Versão aditiva de um clipe, só com a parte de cima, relativa a uma pose de referência.
+// Tocada por cima da locomoção: o escudo sobe enquanto as pernas continuam andando.
+export function clipeAditivoSuperior(clip, referencia, nome = `${clip.name}_sup`) {
+  const filtrado = new THREE.AnimationClip(nome, clip.duration,
+    clip.tracks.filter((t) => OSSOS_SUPERIORES.includes(t.name.split('.')[0]) && t.name.endsWith('quaternion')).map((t) => t.clone()));
+  const ref = new THREE.AnimationClip(`${nome}_ref`, referencia.duration,
+    referencia.tracks.filter((t) => OSSOS_SUPERIORES.includes(t.name.split('.')[0]) && t.name.endsWith('quaternion')).map((t) => t.clone()));
+  return THREE.AnimationUtils.makeClipAdditive(filtrado, 0, ref, 30);
 }
 
 // Dados de combate de cada golpe (em segundos do clipe):
@@ -144,7 +232,7 @@ export function criarClipes() {
     [1.2, { hips: { pos: [0, -0.05, 0] }, Spine1: [6, 4, 0], Head: [-2, 4, 0],
       armR: { fore: [0.15, 0.25, 1], blade: [0.05, 1, 0.3] }, armL: { fore: [-0.6, 0.2, 0.75] } }],
     [2.4, {}],
-  ]);
+  ], GUARDA, { ciclo: true });
 
   c.corte1 = clipe(rig, 'corte1', [
     [0, {}],
@@ -155,7 +243,7 @@ export function criarClipes() {
     [0.31, { Spine: [6, 22, 0], Spine1: [4, 18, 0], hips: { pos: [0, -0.05, 0.03] },
       armR: { up: [0.5, -0.3, 0.8], fore: [0.9, -0.1, 0.4], hand: [0.9, -0.1, 0.4], blade: [0.85, -0.1, -0.5] } }],
     [0.55, {}],
-  ]);
+  ], GUARDA, { acelera: [0.22] });
 
   c.corte2 = clipe(rig, 'corte2', [
     [0, { Spine: [6, 22, 0], Spine1: [4, 18, 0],
@@ -167,7 +255,7 @@ export function criarClipes() {
     [0.29, { Spine: [4, -24, 0], Spine1: [2, -20, 0], hips: { pos: [0, -0.05, 0.03] },
       armR: { up: [-0.75, -0.1, 0.6], fore: [-0.9, 0.25, 0.3], hand: [-0.9, 0.25, 0.3], blade: [-0.75, 0.45, -0.5] } }],
     [0.55, {}],
-  ]);
+  ], GUARDA, { acelera: [0.2] });
 
   const golpeAlto = (tPreparo, tSegura, tCorte, tSegue, tFim) => [
     [0, {}],
@@ -185,9 +273,9 @@ export function criarClipes() {
       armR: { up: [-0.1, -0.35, 0.95], fore: [0, -0.6, 0.8], hand: [0, -0.6, 0.8], blade: [0, -0.85, 0.5] } }],
     [tFim, {}],
   ];
-  c.corte3 = clipe(rig, 'corte3', golpeAlto(0.26, null, 0.4, 0.5, 0.85));
+  c.corte3 = clipe(rig, 'corte3', golpeAlto(0.26, null, 0.4, 0.5, 0.85), GUARDA, { acelera: [0.4] });
   // O adversário usa o golpe alto com uma pausa longa no alto: é o aviso para você defender.
-  c.golpeInimigo = clipe(rig, 'golpeInimigo', golpeAlto(0.35, 0.7, 0.82, 0.92, 1.3));
+  c.golpeInimigo = clipe(rig, 'golpeInimigo', golpeAlto(0.35, 0.7, 0.82, 0.92, 1.3), GUARDA, { acelera: [0.82] });
 
   c.defesa = clipe(rig, 'defesa', [[0, {}], [0.12, DEFESA]]);
   c.defesaImpacto = clipe(rig, 'defesaImpacto', [

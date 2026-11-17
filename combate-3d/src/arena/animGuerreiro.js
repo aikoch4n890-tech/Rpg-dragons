@@ -2,9 +2,10 @@
 // Reaproveita os clipes do treino (guarda, corte1-3, defesa, dano, poseT) e adiciona
 // locomoção, reações e um clipe próprio para cada família de habilidade.
 // Direções dos braços: espaço do personagem (olha para +Z, +X é o lado esquerdo dele).
-import { clipe, juntar, criarClipes, GUARDA, DEFESA } from '../poses.js';
+import { clipe, juntar, criarClipes, medirPassada, GUARDA, DEFESA } from '../poses.js';
+import { cicloMarcha, misturarBraco } from '../marcha.js';
+import { clipesReacao } from '../reacoes.js';
 import { criarPersonagem } from '../rig.js';
-import { ciclo } from './animGoblin.js';
 
 const ESPADA_GUARDA = GUARDA.armR;
 const ESCUDO_GUARDA = GUARDA.armL;
@@ -44,26 +45,68 @@ const AJOELHADO = {
 export function criarClipesGuerreiro() {
   const c = criarClipes(); // guarda, corte1, corte2, corte3, golpeInimigo, defesa, defesaImpacto, dano, poseT
   const rig = criarPersonagem();
-  const k = (nome, chaves, base = GUARDA) => { c[nome] = clipe(rig, nome, chaves, base); };
-  const LOCO = juntar(GUARDA, { hips: { rot: [0, -8, 0] }, ...PERNAS_LOCO });
+  const k = (nome, chaves, base = GUARDA, op = {}) => { c[nome] = clipe(rig, nome, chaves, base, { acelera: ACELERA[nome], ...op }); };
+  const loop = { ciclo: true };
+  // ---------- Guarda (idle): respira, troca o peso de perna, olha em volta ----------
+  const RESPIRA = { Spine1: [6, 4, 0], hips: { pos: [0, -0.045, 0] } };
+  k('guarda', [
+    [0, {}],
+    [1.2, { ...RESPIRA, Head: [-2, 4, 0], armR: { ...ESPADA_GUARDA, fore: [0.15, 0.25, 1], blade: [0.05, 1, 0.3] } }],
+    [2.4, { hips: { pos: [0.015, -0.035, 0], rot: [0, -18, 1.5] }, Head: [-4, 12, 0], armL: { ...ESCUDO_GUARDA, fore: [-0.62, 0.22, 0.74] } }],
+    [3.6, { ...RESPIRA, hips: { pos: [0.015, -0.045, 0], rot: [0, -18, 1.5] }, Head: [-3, -6, 0] }],
+    [4.8, {}],
+  ], GUARDA, loop);
 
-  // ---------- Locomoção ----------
-  k('andar', ciclo(0.9, 22, 2, PERNAS_LOCO, 6), LOCO);
-  const CORRIDA = juntar(LOCO, {
-    armR: { up: [-0.3, -0.9, -0.25], fore: [-0.1, -0.5, 0.85], hand: [-0.1, -0.6, 0.8], blade: [0, 0.4, 1] },
-    armL: { up: [0.3, -0.85, 0.25], fore: [-0.35, 0.25, 0.9], shield: [0.6, 0, 0.8] },
+  // ---------- Locomoção (ciclos de marcha com braços em contrabalanço) ----------
+  const LOCO = juntar(GUARDA, PERNAS_LOCO);
+  const T = Math.PI * 2;
+  const vai = (phi) => 0.5 - 0.5 * Math.cos(T * phi); // 0 quando a perna esquerda está à frente
+  const ESPADA_F = { ...ESPADA_GUARDA, up: [-0.24, -0.84, 0.44] };
+  const ESPADA_T = { ...ESPADA_GUARDA, up: [-0.34, -0.88, 0.1] };
+  const ESCUDO_F = { ...ESCUDO_GUARDA, up: [0.33, -0.72, 0.52] };
+  const ESCUDO_T = { ...ESCUDO_GUARDA, up: [0.38, -0.8, 0.3] };
+  const bracosAndar = (phi) => ({ armR: misturarBraco(ESPADA_F, ESPADA_T, vai(phi)), armL: misturarBraco(ESCUDO_T, ESCUDO_F, vai(phi)) });
+  const CORRE_R = { up: [-0.3, -0.9, -0.25], fore: [-0.1, -0.5, 0.85], hand: [-0.1, -0.6, 0.8], blade: [0, 0.4, 1] };
+  const CORRE_L = { up: [0.3, -0.85, 0.25], fore: [-0.35, 0.25, 0.9], shield: [0.6, 0, 0.8] };
+  const bracosCorrer = (amp) => (phi) => ({
+    armR: misturarBraco({ ...CORRE_R, up: [-0.3, -0.78, 0.35 * amp] }, { ...CORRE_R, up: [-0.32, -0.8, -0.5 * amp] }, vai(phi)),
+    armL: misturarBraco({ ...CORRE_L, up: [0.32, -0.82, -0.2 * amp] }, { ...CORRE_L, up: [0.3, -0.75, 0.45 * amp] }, vai(phi)),
   });
-  k('correr', ciclo(0.62, 36, 16, PERNAS_LOCO, 6), CORRIDA);
-  k('lateral', [
-    [0, { LeftUpLeg: [-6, 0, 20], RightUpLeg: [-6, 0, -4], hips: { pos: [0, -0.06, 0] } }],
-    [0.35, { LeftUpLeg: [-6, 0, 4], RightUpLeg: [-6, 0, -20], hips: { pos: [0, -0.04, 0] } }],
-    [0.7, { LeftUpLeg: [-6, 0, 20], RightUpLeg: [-6, 0, -4], hips: { pos: [0, -0.06, 0] } }],
-  ], juntar(LOCO, { hips: { rot: [0, -20, 0] } }));
-  k('passoAtras', [[0, {}], [0.12, { hips: { pos: [0, -0.09, -0.06] }, Spine: [12, 8, 0], LeftUpLeg: [-10, 0, 5], RightUpLeg: [30, 0, -6], RightLeg: [30, 0, 0] }], [0.45, {}]]);
-  k('preparoPulo', [[0, {}], [0.16, { ...AGACHADO, Spine: [20, 0, 0] }]]);
-  const NO_AR = { hips: { pos: [0, 0, 0] }, Spine: [12, 0, 0], LeftUpLeg: [-70, 0, 6], LeftLeg: [90, 0, 0], RightUpLeg: [-30, 0, -6], RightLeg: [80, 0, 0], RightFoot: [-20, 0, 0] };
-  k('pulo', [[0, NO_AR], [1, NO_AR]]);
-  k('aterrissar', [[0, { ...AGACHADO, Spine: [24, 0, 0] }], [0.35, {}]]);
+  k('andar', cicloMarcha({ periodo: 1.0, amplitude: 24, joelhoApoio: 12, joelhoBalanco: 48, inclinacao: 4, giroQuadril: 7, sobeDesce: 0.028, pernasBase: PERNAS_LOCO, giroBase: -6, bracos: bracosAndar }), LOCO, loop);
+  k('correr', cicloMarcha({ periodo: 0.68, amplitude: 38, joelhoApoio: 22, joelhoBalanco: 95, inclinacao: 13, giroQuadril: 10, sobeDesce: 0.055, pernasBase: PERNAS_LOCO, bracos: bracosCorrer(1) }), LOCO, loop);
+  k('sprint', cicloMarcha({ periodo: 0.56, amplitude: 48, joelhoApoio: 28, joelhoBalanco: 125, inclinacao: 24, giroQuadril: 12, sobeDesce: 0.065, pernasBase: PERNAS_LOCO, bracos: bracosCorrer(1.5) }), LOCO, loop);
+  // Recuar em guarda: passos curtos, joelhos dobrados, tronco um pouco para trás, escudo mais alto
+  const PERNAS_RECUO = { ...PERNAS_LOCO, LeftLeg: [22, 0, 0], RightLeg: [22, 0, 0], LeftUpLeg: [-12, 0, 4], RightUpLeg: [-10, 0, -4] };
+  const ESCUDO_ALTO = { up: [0.32, -0.55, 0.7], fore: [-0.85, 0.2, 0.45], shield: [0.15, 0.05, 1] };
+  k('recuar', cicloMarcha({ direcao: 'tras', periodo: 0.9, amplitude: 15, joelhoApoio: 18, joelhoBalanco: 52, inclinacao: -3, giroQuadril: 4, sobeDesce: 0.018, pernasBase: PERNAS_RECUO, giroBase: -10,
+    bracos: () => ({ armL: ESCUDO_ALTO }) }), LOCO, loop);
+  // Passo lateral (peito voltado para o inimigo); um clipe para cada lado
+  const PERNAS_LAT = { ...PERNAS_LOCO, LeftLeg: [16, 0, 0], RightLeg: [16, 0, 0], LeftUpLeg: [-8, 0, 4], RightUpLeg: [-8, 0, -4] };
+  for (const [nome, dir] of [['lateralE', 'esq'], ['lateralD', 'dir']]) {
+    k(nome, cicloMarcha({ direcao: dir, periodo: 0.8, amplitude: 14, joelhoApoio: 12, joelhoBalanco: 50, inclinacao: 4, sobeDesce: 0.02, balancoQuadril: 2, pernasBase: PERNAS_LAT, giroBase: -10 }), LOCO, loop);
+  }
+  // Girar no lugar: passinhos curtos enquanto o corpo vira
+  k('virar', cicloMarcha({ periodo: 0.7, amplitude: 5, joelhoApoio: 6, joelhoBalanco: 30, inclinacao: 3, giroQuadril: 3, sobeDesce: 0.01, pernasBase: PERNAS_LOCO }), LOCO, loop);
+
+  k('passoAtras', [[0, {}], [0.12, { hips: { pos: [0, -0.09, -0.06] }, Spine: [12, 8, 0], LeftUpLeg: [-10, 0, 5], RightUpLeg: [30, 0, -6], RightLeg: [30, 0, 0], armL: ESCUDO_ALTO }], [0.45, {}]]);
+
+  // ---------- Salto em fases: preparo, subida, queda, aterrissagem leve ou pesada ----------
+  k('preparoPulo', [[0, {}], [0.16, { ...AGACHADO, Spine: [20, 0, 0], armR: { ...ESPADA_GUARDA, up: [-0.35, -0.9, -0.2] }, armL: { ...ESCUDO_GUARDA, up: [0.4, -0.85, -0.1] } }]]);
+  const SUBINDO = { hips: { pos: [0, 0, 0] }, Spine: [10, 0, 0], LeftUpLeg: [-75, 0, 6], LeftLeg: [95, 0, 0], LeftFoot: [-10, 0, 0], RightUpLeg: [-35, 0, -6], RightLeg: [85, 0, 0], RightFoot: [-20, 0, 0],
+    armR: { ...ESPADA_GUARDA, up: [-0.4, -0.5, 0.5] }, armL: { ...ESCUDO_GUARDA, up: [0.45, -0.45, 0.5] } };
+  const CAINDO = { hips: { pos: [0, 0, 0] }, Spine: [2, 0, 0], Head: [6, 0, 0], LeftUpLeg: [-30, 0, 8], LeftLeg: [35, 0, 0], LeftFoot: [-5, 0, 0], RightUpLeg: [-10, 0, -8], RightLeg: [30, 0, 0], RightFoot: [-10, 0, 0],
+    armR: { up: [-0.75, -0.2, 0.3], fore: [-0.5, 0.3, 0.7], hand: [-0.5, 0.3, 0.7], blade: [0, 0.6, 0.8] }, armL: { up: [0.75, -0.2, 0.3], fore: [0.3, 0.2, 0.9], shield: [0.8, 0.2, 0.4] } };
+  k('subindo', [[0, SUBINDO], [0.3, { ...SUBINDO, LeftUpLeg: [-80, 0, 6], RightUpLeg: [-40, 0, -6] }], [0.6, SUBINDO]], GUARDA, loop);
+  k('caindo', [[0, CAINDO], [0.25, { ...CAINDO, armR: { ...CAINDO.armR, up: [-0.8, -0.1, 0.25] }, armL: { ...CAINDO.armL, up: [0.8, -0.1, 0.25] } }], [0.5, CAINDO]], GUARDA, loop);
+  k('pulo', [[0, SUBINDO], [1, SUBINDO]]);
+  const NO_AR = SUBINDO; // pose aérea usada pelo ataque no ar
+  k('aterrissar', [[0, { ...AGACHADO, Spine: [18, 0, 0] }], [0.32, {}]]);
+  k('aterrissarPesado', [
+    [0, { ...AGACHADO, hips: { pos: [0, -0.28, 0.02] }, Spine: [34, 0, 0], Head: [-20, 0, 0], LeftLeg: [100, 0, 0], RightLeg: [95, 0, 0],
+      armL: { up: [0.4, -0.9, 0.2], fore: [0.1, -0.9, 0.4], shield: [0.9, 0.1, 0.3] } }],
+    [0.25, { ...AGACHADO, hips: { pos: [0, -0.24, 0.02] }, Spine: [30, 0, 0], Head: [-12, 0, 0] }],
+    [0.65, {}],
+  ]);
   // Queda controlada: rolamento para a frente, braços presos ao tronco.
   const ROLO = (graus) => ({
     hips: { pos: [0, -0.62, 0], rot: [graus, 0, 0] }, Spine: [45, 0, 0], Spine1: [30, 0, 0], Head: [30, 0, 0],
@@ -96,11 +139,11 @@ export function criarClipesGuerreiro() {
   const LUTANDO = (lado) => ({ Spine: [20, 15 * lado, 0], Head: [-10, -10 * lado, 0], hips: { pos: [0, -0.08, -0.04] },
     armR: { up: [-0.4, 0.1, 0.9], fore: [0.3, 0.3, 0.9], hand: [0.3, 0.3, 0.9], blade: [0, 1, 0] },
     armL: { up: [0.4, 0.1, 0.9], fore: [-0.3, 0.3, 0.9], shield: [0, 0.2, 1] } });
-  k('agarrado', [[0, LUTANDO(1)], [0.25, LUTANDO(-1)], [0.5, LUTANDO(1)]]);
+  k('agarrado', [[0, LUTANDO(1)], [0.25, LUTANDO(-1)], [0.5, LUTANDO(1)]], GUARDA, loop);
   const CANSADO = { Spine: [35, 0, 0], Spine1: [10, 0, 0], Head: [-25, 0, 0], hips: { pos: [0, -0.08, 0] },
     armR: { up: [-0.25, -0.9, 0.35], fore: [0, -0.7, 0.7], hand: [0, -0.7, 0.7], blade: [0, -0.5, 0.8] },
     armL: { up: [0.25, -0.9, 0.35], fore: [0, -0.8, 0.6], shield: [0.8, 0, 0.5] } };
-  k('exausto', [[0, CANSADO], [0.6, juntar(CANSADO, { Spine1: [16, 0, 0], Head: [-15, 0, 0] })], [1.2, CANSADO]]);
+  k('exausto', [[0, CANSADO], [0.6, juntar(CANSADO, { Spine1: [16, 0, 0], Head: [-15, 0, 0] })], [1.2, CANSADO]], GUARDA, loop);
   k('vitoria', [[0, {}], [0.35, { Spine: [-6, 0, 0], Head: [-12, 0, 0], hips: { rot: [0, 0, 0] },
     armR: { up: [-0.3, 0.95, 0.15], fore: [-0.05, 1, 0.1], hand: [0, 0, 1], blade: [0, 1, 0.05] } }],
     [1, { Spine: [-6, 0, 0], Head: [-12, 0, 0], hips: { rot: [0, 0, 0] }, armR: { up: [-0.3, 0.95, 0.15], fore: [-0.05, 1, 0.1], hand: [0, 0, 1], blade: [0, 1, 0.05] } }]]);
@@ -155,7 +198,8 @@ export function criarClipesGuerreiro() {
   // ---------- Espada ----------
   const ARRANQUE = { Spine: [32, 0, 0], Spine1: [8, 0, 0], hips: { pos: [0, -0.12, 0] }, ...ESTOCADA_PERNAS,
     armR: { up: [-0.4, -0.7, -0.5], fore: [-0.3, -0.4, -0.85], hand: [-0.3, -0.4, -0.85], blade: [-0.2, -0.3, -1] } };
-  k('arranque', [[0, {}], [0.12, ARRANQUE], [0.5, ARRANQUE]]);
+  const ARRANQUE_SUP = { Spine: [16, 0, 0], Spine1: [8, 0, 0], armR: ARRANQUE.armR };
+  k('arranque', cicloMarcha({ periodo: 0.42, amplitude: 50, joelhoApoio: 30, joelhoBalanco: 115, inclinacao: 18, giroQuadril: 8, sobeDesce: 0.06, pernasBase: PERNAS_LOCO }), juntar(GUARDA, ARRANQUE_SUP), loop);
   k('arranqueCorte', [
     [0, ARRANQUE],
     [0.08, { ...ARRANQUE, Spine: [20, -20, 0], armR: { up: [-0.6, -0.6, 0.3], fore: [-0.3, -0.5, 0.8], hand: [-0.3, -0.5, 0.8], blade: [-0.6, -0.3, -0.5] } }],
@@ -211,7 +255,7 @@ export function criarClipesGuerreiro() {
     armR: { up: [-1, 0.05, 0.15], fore: [-1, 0, 0.1], hand: [-1, 0, 0.1], blade: [-0.95, 0, 0.3] },
     armL: { up: [0.3, -0.7, 0.4], fore: [-0.6, 0.3, 0.7], shield: [0.7, 0, 0.7] } };
   k('giroPreparo', [[0, {}], [0.2, { ...GIRO, Spine: [6, -35, 0], armR: { ...GIRO.armR, blade: [-0.6, 0, -0.8] } }]]);
-  k('giro', [[0, GIRO], [1, GIRO]]);
+  k('giro', [[0, GIRO], [1, GIRO]], GUARDA, loop);
   k('giroFim', [[0, GIRO], [0.45, {}]]);
   k('descendente', [
     [0, {}],
@@ -281,7 +325,22 @@ export function criarClipesGuerreiro() {
     [0.3, { ...PROTEGIDA, armR: JAB }], [0.4, { ...PROTEGIDA, armR: PUXA }], [0.5, { ...PROTEGIDA, armR: JAB }], [0.62, { ...PROTEGIDA, armR: PUXA }],
   ]);
   const MURALHA = { ...FIRME, Spine: [15, 10, 0], Spine1: [5, 5, 0], hips: { pos: [0, -0.16, 0] }, armL: ESCUDO_ERGUIDO, armR: ESPADA_RECOLHIDA };
-  k('muralha', [[0, MURALHA], [0.8, juntar(MURALHA, { hips: { pos: [0, -0.17, 0] } })], [1.6, MURALHA]]);
+  k('muralha', [[0, MURALHA], [0.8, juntar(MURALHA, { hips: { pos: [0, -0.17, 0] } })], [1.6, MURALHA]], GUARDA, loop);
 
+  // Reações por parte do corpo, intensidade e direção
+  Object.assign(c, clipesReacao(rig, GUARDA));
+
+  // Passada de cada ciclo (m/s com o clipe em velocidade 1): evita pé escorregando
+  for (const [nome, eixo] of [['andar', 'z'], ['correr', 'z'], ['sprint', 'z'], ['recuar', 'z'], ['lateralE', 'x'], ['lateralD', 'x'], ['virar', 'z'], ['arranque', 'z']]) {
+    c[nome].userData = { passada: medirPassada(rig, c[nome], eixo) };
+  }
   return c;
 }
+
+// Segmentos que aceleram até o impacto (tempo da chave de impacto de cada golpe)
+const ACELERA = {
+  estocada: [0.3], trombada: [0.15], arranqueCorte: [0.18], corteRecuo: [0.3], ascendentes: [0.22, 0.44, 0.68],
+  corteLancador: [0.45], descendente: [0.45], rajada: [0.08, 0.26, 0.35, 0.53, 0.62], rajadaFinal: [0.36],
+  pancadaEscudo: [0.24], pancadaPesada: [0.42], cimbalo: [0.1, 0.28, 0.46], golpeCarregado: [0.86], contraCorte: [0.1],
+  sequenciaA: [0.17], sequenciaB: [0.17], ataqueSalto: [0.3], estocadaProtegida: [0.1, 0.3, 0.5], aparo: [0.1],
+};

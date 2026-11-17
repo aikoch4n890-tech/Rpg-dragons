@@ -213,13 +213,16 @@ export class IAGuerreiro {
     h.intencao.vel.set(0, 0);
     h.intencao.olhar = null;
     h.intencao.correr = false;
+    h.intencao.sprint = false;
     if (!h.vivo) { h.estadoIA = 'Derrotado'; return; }
-    const rotulo = { reacao: { dano: 'Cambaleando', cambalear: 'Cambaleando', derrubado: 'Derrubado', aterrissar: 'Recuperando', rolamento: 'Recuperando' }[h.reacao], exausto: 'Recuperando', agarrado: 'Agarrado', recuperando: 'Recuperando', vitoria: 'Vitória' }[h.estado];
+    const rotulo = { reacao: h.reacao === 'derrubado' ? 'Derrubado' : /^aterr|rolamento/.test(h.reacao || '') ? 'Recuperando' : 'Cambaleando', exausto: 'Recuperando', agarrado: 'Agarrado', recuperando: 'Recuperando', vitoria: 'Vitória' }[h.estado];
     if (rotulo) h.estadoIA = rotulo;
     if (['reacao', 'exausto', 'agarrado', 'morto', 'recuperando'].includes(h.estado)) return;
 
     this.tPercepcao -= dt;
     if (this.tPercepcao <= 0) { this.perceber(); this.tPercepcao = CONFIG.ia.intervaloPercepcao; }
+    // A cabeça acompanha o alvo (ou quem está atacando agora)
+    h.olharAlvo = this.alvo?.vivo ? this.alvo.partes.lista[0].centro : null;
     this.progressoAlvo.t += dt;
 
     // Ataque no ar se estiver pulando sobre um inimigo
@@ -346,7 +349,7 @@ export class IAGuerreiro {
       const obs = this.ctx.mundo.obstaculoNoCaminho(pos, ap, h.corpo.raio, pos.y);
       if (obs && obs.obstaculo.h <= 0.75 && obs.t * dist < 1.2 && dist > 2.5 && h.saltar(dir, 3)) { this.anotar('Impulso sobre obstáculo'); return; }
       h.estadoIA = 'Aproximando';
-      this.mover(dir, dist > 4 ? 4.2 : 1.8, dist > 4, ap);
+      this.mover(dir, dist > 8 ? 6.2 : dist > 4 ? 4.2 : 1.8, dist > 4, ap);
       return;
     }
     // 8. No alcance: ritmo entre ações (circula um pouco para não parecer robótico)
@@ -441,6 +444,7 @@ export class IAGuerreiro {
     }
     h.intencao.vel.copy(d.multiplyScalar(vel));
     h.intencao.correr = correr;
+    h.intencao.sprint = vel > 5; // longe do alvo: corrida acelerada
   }
 
   circular(dir, aproximar) {

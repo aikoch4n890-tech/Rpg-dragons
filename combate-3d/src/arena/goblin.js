@@ -176,6 +176,11 @@ export function criarGoblin(tipo = 'goblin', semente = 21) {
   // Garra esquerda também machuca (agarrão usa as duas mãos).
   const garraEsq = construirArma(ossos.LeftHand, 'garra');
 
+  // Boca (hitbox da mordida)
+  const boca = new THREE.Object3D();
+  boca.position.set(0, 0.06, 0.11);
+  ossos.Head.add(boca);
+
   if (tipo === 'escudeiro') {
     // Capuz de couro simples
     peca(ossos.Head, new THREE.SphereGeometry(0.112, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.5), M.faixa, { pos: [0, 0.135, -0.01] });
@@ -184,7 +189,7 @@ export function criarGoblin(tipo = 'goblin', semente = 21) {
   if (tipo === 'bruto') raiz.scale.setScalar(2.1);
 
   raiz.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  return { raiz, ossos, arma, garraEsq, escudo, materiais: M, tipo, tipoArma };
+  return { raiz, ossos, arma, garraEsq, escudo, boca, materiais: M, tipo, tipoArma };
 }
 
 // Criatura voadora de teste: morcego gigante com asas articuladas (animação procedural).

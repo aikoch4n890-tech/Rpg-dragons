@@ -68,7 +68,7 @@ const ctx = {
   clipesGoblin,
   inimigos: () => inimigos,
   projeteis: () => projeteis,
-  tremer: (v) => { tremor = Math.max(tremor, v); },
+  tremer: (v) => { tremor = Math.max(tremor, Math.min(v, 0.07)); }, // tremor limitado: não atrapalha o combate
   evento: (tipo, dado) => { placar.eventos[tipo] = (placar.eventos[tipo] || 0) + 1; hud.evento(tipo, dado); },
   heroiSolto: () => heroi.soltarAgarrao(),
   lancarPedra,
@@ -86,7 +86,7 @@ const ctx = {
       efeitos.numero(ponto, res.dano, res.fraca ? 'critico' : 'dano');
     }
     pausaGolpe = Math.max(pausaGolpe, forte ? 0.08 : 0.045);
-    if (forte) tremor = Math.max(tremor, 0.06);
+    if (forte) { tremor = Math.max(tremor, 0.04); foco = 0.35; }
     if (res.morreu) aoMatar(inimigo);
   },
   aoDefender(h, g, tipo) {
@@ -94,7 +94,7 @@ const ctx = {
     if (tipo === 'perfeito') placar.perfeitos++; else placar.bloqueados++;
     if (tipo === 'perfeito') {
       efeitos.clarao(p); efeitos.metal(p, true); audio.tocar('perfeito');
-      pausaGolpe = 0.12; tremor = Math.max(tremor, 0.05);
+      pausaGolpe = 0.12; tremor = Math.max(tremor, 0.03); foco = 0.45;
       hud.evento('perfeito');
     } else {
       efeitos.metal(p); audio.tocar('bloqueio');
@@ -106,7 +106,7 @@ const ctx = {
     efeitos.sangue(g.ponto || h.centro);
     efeitos.numero(g.ponto || h.centro, dano, 'sofrido');
     audio.tocar('impactoCarne');
-    tremor = Math.max(tremor, 0.05 + Math.min(0.1, dano / 400));
+    tremor = Math.max(tremor, 0.03 + Math.min(0.04, dano / 600));
     pausaGolpe = Math.max(pausaGolpe, 0.05);
   },
 };
@@ -219,6 +219,8 @@ function limparInimigos() {
   for (const e of inimigos) removerInimigo(e);
   inimigos.length = 0;
   controle.atacando.clear();
+  ia.alvo = null; // sem alvo fantasma (a câmera e a cabeça do herói não miram quem saiu)
+  heroi.olharAlvo = null;
 }
 
 // ---------- Câmera ----------
@@ -226,21 +228,49 @@ let cameraAuto = progresso.dados.config.cameraAuto;
 const alvoCamera = new THREE.Vector3();
 let usuarioMexeu = 0;
 controles.addEventListener('start', () => { usuarioMexeu = 4; });
+let distCamera = 9, foco = 0, fracColisao = 1;
+const fovBase = () => (camera.aspect < 0.8 ? 60 : 45);
 function atualizarCamera(dt) {
   const p = heroi.corpo.pos;
-  alvoCamera.lerp(new THREE.Vector3(p.x, p.y + 1.0, p.z), 1 - Math.exp(-dt * 5));
+  // Enquadramento: o foco puxa um pouco na direção do alvo para o inimigo ficar na tela
+  const alvo = ia.alvo?.vivo ? ia.alvo.corpo.pos : null;
+  const sep = alvo ? Math.hypot(alvo.x - p.x, alvo.z - p.z) : 0;
+  const puxa = alvo && sep < 12 ? 0.3 : 0;
+  const centro = new THREE.Vector3(p.x, p.y + 1.0, p.z);
+  if (puxa) centro.lerp(new THREE.Vector3(alvo.x, alvo.y + 1.0, alvo.z), puxa);
+  alvoCamera.lerp(centro, 1 - Math.exp(-dt * 3.5));
   const delta = new THREE.Vector3().subVectors(alvoCamera, controles.target);
   controles.target.add(delta);
   camera.position.add(delta);
   usuarioMexeu -= dt;
   if (cameraAuto && usuarioMexeu <= 0 && !menu.aberto) {
-    // Mantém uma vista elevada atrás e ao lado, a uma distância confortável
+    // Vista elevada atrás e ao lado; afasta um pouco quando o alvo está longe (sem movimentos bruscos)
+    distCamera += (THREE.MathUtils.clamp(8.5 + sep * 0.35, 8.5, 12.5) - distCamera) * (1 - Math.exp(-dt * 1.2));
     const off = new THREE.Vector3().subVectors(camera.position, controles.target);
-    const dist = THREE.MathUtils.lerp(off.length(), 9, 1 - Math.exp(-dt * 1.5));
+    const dist = THREE.MathUtils.lerp(off.length(), distCamera, 1 - Math.exp(-dt * 1.5));
     off.y = THREE.MathUtils.lerp(off.y, dist * 0.55, 1 - Math.exp(-dt * 1.5));
     off.setLength(dist);
     camera.position.copy(controles.target).add(off);
   }
+  // Não atravessa rochas: se houver uma entre o foco e a câmera, aproxima a câmera até antes dela
+  const c = camera.position, t = controles.target;
+  let tMin = 1;
+  for (const o of mundo.obstaculos) {
+    const hit = mundo.intersecao(o, t.x, t.z, c.x, c.z, 0.4);
+    if (hit === null || hit <= 0.02) continue;
+    const yRaio = t.y + (c.y - t.y) * hit; // altura do raio nesse ponto
+    if (o.h > yRaio - 0.2) tMin = Math.min(tMin, hit);
+  }
+  // Aproxima rápido quando uma rocha entra na frente e volta devagar quando ela sai (sem saltos)
+  const fracAlvo = tMin < 1 ? Math.max(0.25, tMin - 0.08) : 1;
+  // Enquanto houver obstáculo, a distância automática não volta a empurrar a câmera para dentro dele
+  if (tMin < 1) distCamera = Math.min(distCamera, Math.max(3, c.distanceTo(t) * fracAlvo));
+  fracColisao += (fracAlvo - fracColisao) * (1 - Math.exp(-dt * (fracAlvo < fracColisao ? 14 : 2.5)));
+  if (fracColisao < 0.999) camera.position.lerpVectors(t, c, fracColisao);
+  // Enquadramento discreto em momentos importantes (defesa perfeita, golpes pesados): fecha 3° de FOV
+  foco = Math.max(0, foco - dt);
+  const fovAlvo = fovBase() - (foco > 0 ? 3 : 0);
+  if (Math.abs(camera.fov - fovAlvo) > 0.01) { camera.fov += (fovAlvo - camera.fov) * (1 - Math.exp(-dt * 6)); camera.updateProjectionMatrix(); }
   sol.position.set(p.x - 6, 12, p.z + 7);
   sol.target.position.set(p.x, 0, p.z);
 }
@@ -302,7 +332,7 @@ function redimensionar() {
   const w = tela.clientWidth, h = tela.clientHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  camera.fov = w / h < 0.8 ? 60 : 45;
+  camera.fov = fovBase();
   camera.updateProjectionMatrix();
 }
 addEventListener('resize', redimensionar);
@@ -360,7 +390,7 @@ renderer.setAnimationLoop((t) => {
   hud.atualizar(dt);
 
   const desloc = new THREE.Vector3();
-  if (tremor > 0) { desloc.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(tremor); tremor = Math.max(0, tremor - dt * 0.4); }
+  if (tremor > 0) { desloc.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(tremor); tremor = Math.max(0, tremor - dt * 0.6); }
   camera.position.add(desloc);
   renderer.render(cena, camera);
   camera.position.sub(desloc);
@@ -371,5 +401,7 @@ window.arena = { heroi, ia, inimigos, progresso, placar, gerar, proximaOnda, lim
   setOndas: (v) => { ondasAutomaticas = v; }, setVelocidade: (v) => { velocidadeJogo = v; },
   // Avança o jogo sem depender da taxa de quadros (testes automatizados)
   simular: (segundos) => { for (let t = 0; t < segundos; t += 1 / 60) simular(1 / 60); },
+  passoCamera: (dt) => { atualizarCamera(dt); controles.update(); },
+  reposicionarCamera: (alvo, pos) => { alvoCamera.copy(alvo); controles.target.copy(alvo); camera.position.copy(pos); fracColisao = 1; },
   get onda() { return onda; } };
 proximaOnda();

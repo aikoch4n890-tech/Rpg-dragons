@@ -13,9 +13,10 @@ export const CONFIG = {
     raio: 0.32,
     velAndar: 1.8,
     velCorrer: 4.2,
+    velSprint: 6.2,
     velLateral: 1.5,
     aceleracao: 14,
-    giroVel: 7, // rad/s
+    giroVel: 5.5, // rad/s (giro máximo; a aceleração angular fica em corpo.js)
     pesoPenalidade: 0.35, // a velocidade cai até 35% quando a carga passa do limite
     gravidade: 18,
     vidaPorNivel: 18,

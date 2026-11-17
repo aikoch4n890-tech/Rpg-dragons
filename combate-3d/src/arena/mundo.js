@@ -3,6 +3,9 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 
+// Altura máxima de degrau que se sobe andando (escada); acima disso precisa do Impulso.
+export const DEGRAU = 0.35;
+
 export class Mundo {
   constructor(cena) {
     this.cena = cena;
@@ -18,7 +21,12 @@ export class Mundo {
     this.rocha(8.5, 6, 1.0, 2.0, pedra);
     this.caixa(1.2, -4.2, 1.6, 0.45, 0.6, madeira, true);
     this.caixa(-9, -2, 2.2, 2.2, 1.25, laje, false);
-    // Degraus da plataforma (um degrau só, alto demais para subir andando: precisa do Impulso).
+    // Escada de três degraus (31 cm cada) do lado leste da plataforma
+    this.caixa(-6.55, -2, 0.25, 0.8, 0.94, laje, false);
+    this.caixa(-6.05, -2, 0.25, 0.8, 0.63, laje, false);
+    this.caixa(-5.55, -2, 0.25, 0.8, 0.31, laje, false);
+    // Rampa do lado sul da plataforma (sobe 1,25 m em 3,2 m)
+    this.rampa(-9, -7.4, -4.2, 1.0, 1.25, laje);
   }
 
   criarChao() {
@@ -75,6 +83,23 @@ export class Mundo {
     this.obstaculos.push({ tipo: 'caixa', x, z, hx, hz, h });
   }
 
+  rampa(x, z0, z1, hx, h, mat) {
+    const L = z1 - z0;
+    const forma = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(L, 0), new THREE.Vector2(L, h)]);
+    const g = new THREE.ExtrudeGeometry(forma, { depth: hx * 2, bevelEnabled: false });
+    g.rotateY(-Math.PI / 2); // eixo da forma vira +Z do mundo
+    g.translate(x + hx, 0, z0);
+    const m = new THREE.Mesh(g, mat);
+    m.castShadow = m.receiveShadow = true;
+    this.cena.add(m);
+    this.obstaculos.push({ tipo: 'rampa', x, z: (z0 + z1) / 2, z0, z1, hx, hz: L / 2, h });
+  }
+
+  alturaRampa(o, x, z) {
+    if (Math.abs(x - o.x) > o.hx || z < o.z0 || z > o.z1) return null;
+    return (o.h * (z - o.z0)) / (o.z1 - o.z0);
+  }
+
   dentro(o, x, z, folga = 0) {
     if (o.tipo === 'circulo') return Math.hypot(x - o.x, z - o.z) < o.r + folga;
     return Math.abs(x - o.x) < o.hx + folga && Math.abs(z - o.z) < o.hz + folga;
@@ -84,7 +109,8 @@ export class Mundo {
   alturaChao(x, z, y) {
     let h = 0;
     for (const o of this.obstaculos) {
-      if (o.tipo === 'caixa' && this.dentro(o, x, z) && o.h <= y + 0.12 && o.h > h) h = o.h;
+      if (o.tipo === 'caixa' && this.dentro(o, x, z) && o.h <= y + DEGRAU && o.h > h) h = o.h;
+      if (o.tipo === 'rampa') { const hr = this.alturaRampa(o, x, z); if (hr !== null && hr <= y + DEGRAU && hr > h) h = hr; }
     }
     return h;
   }
@@ -93,7 +119,13 @@ export class Mundo {
   resolver(corpo) {
     const p = corpo.pos;
     for (const o of this.obstaculos) {
-      if (o.h <= p.y + 0.12 && o.tipo === 'caixa') continue; // está em cima
+      if (o.h <= p.y + DEGRAU && o.tipo === 'caixa') continue; // em cima, ou degrau que dá para subir
+      if (o.tipo === 'rampa') {
+        // Rampa: anda por cima; pelas laterais, onde está alta demais, é parede
+        const hr = this.alturaRampa(o, p.x, p.z);
+        if (hr !== null && hr > p.y + DEGRAU) { p.x = o.x + Math.sign(p.x - o.x || 1) * (o.hx + corpo.raio); corpo.bateu = true; }
+        continue;
+      }
       if (o.tipo === 'circulo') {
         const dx = p.x - o.x, dz = p.z - o.z;
         const d = Math.hypot(dx, dz), min = o.r + corpo.raio;
@@ -154,7 +186,7 @@ export class Mundo {
   obstaculoNoCaminho(a, b, raio, y = 0) {
     let melhor = null, tMin = Infinity;
     for (const o of this.obstaculos) {
-      if (o.tipo === 'caixa' && o.h <= y + 0.12) continue;
+      if ((o.tipo === 'caixa' && o.h <= y + DEGRAU) || o.tipo === 'rampa') continue; // dá para passar andando
       const t = this.intersecao(o, a.x, a.z, b.x, b.z, raio);
       if (t !== null && t < tMin) { tMin = t; melhor = o; }
     }

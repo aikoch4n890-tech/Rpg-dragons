@@ -1,6 +1,8 @@
 // Corpo físico (posição, velocidade, salto, queda) e animador em camadas (locomoção + ação).
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import { clipeAditivoSuperior } from '../poses.js';
+import { DEGRAU } from './mundo.js';
 
 export class Corpo {
   constructor(raiz, raio, massa = 1) {
@@ -14,6 +16,11 @@ export class Corpo {
     this.noChao = true;
     this.alturaPico = 0;
     this.yaw = raiz.rotation.y;
+    this.angVel = 0;
+    this.giroMedido = 0; // rad/s realmente girados (alimenta a animação de giro no lugar)
+    this.yawAnterior = this.yaw;
+    this.velReal = new THREE.Vector2();
+    this.posAnterior = raiz.position.clone();
     this.bateu = false;
     this.voador = false;
     this.semColisaoCorpos = false;
@@ -22,12 +29,17 @@ export class Corpo {
   get frente() { return new THREE.Vector2(Math.sin(this.yaw), Math.cos(this.yaw)); }
   get lado() { return new THREE.Vector2(Math.cos(this.yaw), -Math.sin(this.yaw)); } // esquerda do personagem (+X local)
 
-  // Gira suavemente até o ângulo desejado.
+  // Gira até o ângulo desejado com aceleração angular (nada de virar instantaneamente):
+  // a velocidade de giro cresce, chega ao máximo e freia perto do alvo.
   virarPara(yawAlvo, velGiro, dt) {
     let d = yawAlvo - this.yaw;
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    const passo = velGiro * dt;
-    this.yaw += Math.abs(d) <= passo ? d : Math.sign(d) * passo;
+    const desejada = THREE.MathUtils.clamp(d * 9, -velGiro, velGiro);
+    const acel = velGiro * 7 * dt;
+    this.angVel += THREE.MathUtils.clamp(desejada - this.angVel, -acel, acel);
+    const passo = this.angVel * dt;
+    this.yaw += Math.abs(passo) > Math.abs(d) && Math.sign(passo) === Math.sign(d) ? d : passo;
+    this.girouNoQuadro = true;
   }
 
   olharPara(x, z, velGiro, dt) {
@@ -48,7 +60,10 @@ export class Corpo {
     let quedaAterrissou = 0;
     if (!this.voador) {
       const chao = mundo.alturaChao(this.pos.x, this.pos.z, this.pos.y);
-      if (!this.noChao || this.pos.y > chao + 0.01) {
+      // Descendo um degrau pequeno andando: acompanha o chão em vez de cair
+      if (this.noChao && this.vy === 0 && this.pos.y > chao + 0.01 && this.pos.y - chao <= DEGRAU + 0.01) {
+        this.pos.y = Math.max(chao, this.pos.y - Math.max(1.5, 10 * (this.pos.y - chao)) * dt);
+      } else if (!this.noChao || this.pos.y > chao + 0.01) {
         if (this.noChao) { this.noChao = false; this.alturaPico = this.pos.y; this.vy = Math.min(this.vy, 0); }
         this.vy -= CONFIG.guerreiro.gravidade * dt;
         this.pos.y += this.vy * dt;
@@ -59,11 +74,28 @@ export class Corpo {
           this.noChao = true;
           this.vy = 0;
         }
+      } else if (chao > this.pos.y) {
+        // Subindo degrau ou rampa: sobe aos poucos (o IK dos pés acompanha), sem teletransporte
+        this.pos.y = Math.min(chao, this.pos.y + Math.max(1.2, 9 * (chao - this.pos.y)) * dt);
       } else {
         this.pos.y = chao;
       }
     }
     mundo.resolver(this);
+    // Velocidade real (deslocamento / tempo): é ela que move as pernas, não a velocidade pedida.
+    // Encostado numa parede, a velocidade real é zero e o personagem não "anda no lugar".
+    if (dt > 0) {
+      const vx = (this.pos.x - this.posAnterior.x) / dt, vz = (this.pos.z - this.posAnterior.z) / dt;
+      const k = Math.min(1, dt * 20);
+      this.velReal.x += (vx - this.velReal.x) * k;
+      this.velReal.y += (vz - this.velReal.y) * k;
+    }
+    this.posAnterior.copy(this.pos);
+    if (!this.girouNoQuadro) this.angVel *= Math.exp(-dt * 12);
+    this.girouNoQuadro = false;
+    const dy = Math.atan2(Math.sin(this.yaw - this.yawAnterior), Math.cos(this.yaw - this.yawAnterior));
+    this.giroMedido += ((dt > 0 ? dy / dt : 0) - this.giroMedido) * Math.min(1, dt * 10);
+    this.yawAnterior = this.yaw;
     this.raiz.rotation.y = this.yaw;
     return quedaAterrissou;
   }
@@ -88,26 +120,42 @@ export function separarCorpos(corpos) {
   }
 }
 
-// Animador em duas camadas: locomoção (guarda, andar, correr, lateral) e ações (golpes, reações).
-// Os pesos sempre somam 1, para nunca misturar com a pose de repouso.
+// Animador em camadas:
+//  1. Locomoção (blend tree): guarda ↔ andar ↔ correr ↔ sprint, por direção (frente, trás, esquerda, direita)
+//     e giro no lugar. Os ciclos andam sincronizados pela mesma fase e a velocidade de cada um vem
+//     da passada medida (userData.passada), então o pé de apoio não escorrega.
+//  2. Ação (golpes, reações): corpo inteiro, entra e sai com fade cruzado.
+//  3. Superior aditiva (defesa): só tronco e braços, por cima da locomoção (pernas continuam andando).
+// Os pesos das camadas 1 e 2 sempre somam 1, para nunca misturar com a pose de repouso.
+const CICLOS = ['andar', 'correr', 'sprint', 'recuar', 'lateralE', 'lateralD', 'virar'];
+
 export class Animador {
-  constructor(raiz, clipes, locomocao = ['guarda', 'andar', 'correr', 'lateral']) {
+  constructor(raiz, clipes, { velocidades = { andar: 1.8, correr: 4.2, sprint: 6 }, variacao = 0 } = {}) {
     this.mixer = new THREE.AnimationMixer(raiz);
     this.clipes = clipes;
+    this.velocidades = velocidades;
+    this.variacao = variacao; // irregularidade no ritmo dos passos (goblins)
     this.loco = {};
-    for (const n of locomocao) {
+    for (const n of ['guarda', ...CICLOS]) {
       if (!clipes[n]) continue;
       const a = this.mixer.clipAction(clipes[n]);
       a.play();
       a.setEffectiveWeight(n === 'guarda' ? 1 : 0);
+      if (n !== 'guarda') a.timeScale = 0; // o tempo dos ciclos é controlado pela fase
       this.loco[n] = a;
     }
+    // Começa a respiração em um ponto aleatório (personagens iguais não respiram juntos)
+    if (this.loco.guarda) this.loco.guarda.time = Math.random() * clipes.guarda.duration;
     this.pesosLoco = Object.fromEntries(Object.keys(this.loco).map((n) => [n, n === 'guarda' ? 1 : 0]));
-    this.acao = null; // { action, peso }
+    this.fase = 0;
+    this.acao = null;
     this.anterior = null;
     this.pesoAcao = 0;
-    this.fade = 0.1;
     this.alvoAcao = 0;
+    this.fade = 0.1;
+    this.sup = null; // camada superior aditiva
+    this.aditivos = {};
+    this.ritmo = 1;
   }
 
   tocar(nome, { fade = 0.08, ts = 1, loop = false, inicio = 0 } = {}) {
@@ -122,8 +170,8 @@ export class Animador {
       a.time = inicio;
       a.play();
     };
+    if (this.loco[nome]) { console.warn('ciclo de locomoção não pode ser ação', nome); return null; }
     if (this.acao && this.acao.action === a) {
-      // Mesmo clipe de novo: reinicia mantendo o peso (não dá para misturar um clipe consigo mesmo).
       configurar();
       this.acao.nome = nome;
       this.alvoAcao = 1;
@@ -143,6 +191,7 @@ export class Animador {
   get nomeAcao() { return this.acao?.nome; }
   get tempoAcao() { return this.acao ? this.acao.action.time : 0; }
   get duracaoAcao() { return this.acao ? this.acao.action.getClip().duration : 0; }
+  set velocidadeAcao(ts) { if (this.acao) this.acao.action.timeScale = ts; }
 
   // Sai da ação e volta para a locomoção.
   soltar(fade = 0.15) {
@@ -150,31 +199,80 @@ export class Animador {
     this.fade = Math.max(0.0001, fade);
   }
 
-  // vLocal: velocidade no espaço do personagem (x = esquerda, y = frente) em m/s
-  atualizar(dt, vLocal, refs = { andar: 1.8, correr: 4.2, lateral: 1.5 }) {
-    const vel = vLocal.length();
-    const alvo = { guarda: 1, andar: 0, correr: 0, lateral: 0 };
-    if (vel > 0.15) {
-      const movendo = Math.min(1, vel / 0.8);
-      alvo.guarda = 1 - movendo;
-      const frente = Math.abs(vLocal.y) / vel, lat = Math.abs(vLocal.x) / vel;
-      const corrida = THREE.MathUtils.clamp((vel - refs.andar) / (refs.correr - refs.andar), 0, 1);
-      if (this.loco.lateral) {
-        alvo.lateral = movendo * lat * (frente < 0.5 ? 1 : 0.5);
-      }
-      const resto = movendo - alvo.lateral;
-      alvo.andar = resto * (1 - corrida);
-      alvo.correr = vLocal.y > 0 ? resto * corrida : 0;
-      if (vLocal.y <= 0) alvo.andar = resto; // para trás, só anda (de costas)
-      // Velocidade e sentido dos ciclos
-      if (this.loco.andar) this.loco.andar.timeScale = (vLocal.y < -0.1 ? -1 : 1) * THREE.MathUtils.clamp(vel / refs.andar, 0.6, 1.6);
-      if (this.loco.correr) this.loco.correr.timeScale = THREE.MathUtils.clamp(vel / refs.correr, 0.7, 1.4);
-      if (this.loco.lateral) this.loco.lateral.timeScale = (vLocal.x >= 0 ? 1 : -1) * THREE.MathUtils.clamp(vel / refs.lateral, 0.6, 1.5);
+  // Camada superior aditiva: mesmo clipe da ação, só tronco e braços, somado à locomoção.
+  tocarSuperior(nome, { fade = 0.08 } = {}) {
+    if (!this.aditivos[nome]) {
+      if (!this.clipes[nome] || !this.clipes.guarda) return null;
+      this.aditivos[nome] = clipeAditivoSuperior(this.clipes[nome], this.clipes.guarda);
     }
-    // Suaviza os pesos da locomoção
-    const k = 1 - Math.exp(-dt * 12);
-    for (const n of Object.keys(this.loco)) this.pesosLoco[n] += ((alvo[n] ?? 0) - this.pesosLoco[n]) * k;
-    const somaLoco = Object.values(this.pesosLoco).reduce((s, v) => s + v, 0) || 1;
+    const a = this.mixer.clipAction(this.aditivos[nome]);
+    a.blendMode = THREE.AdditiveAnimationBlendMode;
+    a.reset();
+    a.setLoop(THREE.LoopOnce, 1);
+    a.clampWhenFinished = true;
+    a.play();
+    if (this.sup && this.sup.action !== a) { this.sup.action.stop(); a.setEffectiveWeight(this.sup.peso); this.sup = { action: a, peso: this.sup.peso, alvo: 1, fade }; }
+    else this.sup = { action: a, peso: this.sup?.peso ?? 0, alvo: 1, fade };
+    return a;
+  }
+  soltarSuperior(fade = 0.15) { if (this.sup) { this.sup.alvo = 0; this.sup.fade = fade; } }
+  get nomeSuperior() { return this.sup?.alvo ? this.sup.action.getClip().name.replace(/_sup$/, '') : null; }
+
+  // O pé está na fase de apoio? Parado (guarda) os dois estão; andando, depende da fase do ciclo.
+  peApoiado(lado) {
+    if ((this.pCiclos ?? 0) < 0.3) return (this.pLoco ?? 1) > 0.5;
+    const psi = (this.fase + (lado === 'Right' ? 0.5 : 0)) % 1;
+    return psi < 0.47;
+  }
+
+  // vLocal: velocidade no espaço do personagem (x = esquerda, y = frente) em m/s; giro: rad/s
+  atualizar(dt, vLocal, refs = null, giro = 0) {
+    const V = refs || this.velocidades;
+    const v = vLocal.length();
+    const alvo = Object.fromEntries(Object.keys(this.loco).map((n) => [n, 0]));
+    const mov = THREE.MathUtils.clamp((v - 0.08) / 0.5, 0, 1);
+    alvo.guarda = 1 - mov;
+    // Giro no lugar: passinhos quando vira parado
+    if (this.loco.virar) {
+      const g = (1 - mov) * THREE.MathUtils.clamp((Math.abs(giro) - 0.6) / 2, 0, 1);
+      alvo.virar = g;
+      alvo.guarda -= g;
+    }
+    if (mov > 0) {
+      const c = vLocal.y / v, s = vLocal.x / v;
+      const wF = Math.max(0, c) ** 2, wB = Math.max(0, -c) ** 2, wL = Math.max(0, s) ** 2, wR = Math.max(0, -s) ** 2;
+      // Para a frente: andar → correr → sprint conforme a velocidade
+      const corrida = THREE.MathUtils.clamp((v - V.andar) / (V.correr - V.andar), 0, 1);
+      const sprint = this.loco.sprint ? THREE.MathUtils.clamp((v - V.correr) / ((V.sprint ?? V.correr * 1.4) - V.correr), 0, 1) : 0;
+      const frente = mov * wF;
+      if (this.loco.correr) {
+        alvo.andar += frente * (1 - corrida);
+        alvo.correr += frente * corrida * (1 - sprint);
+        if (this.loco.sprint) alvo.sprint += frente * corrida * sprint;
+      } else alvo.andar += frente;
+      (this.loco.recuar ? (alvo.recuar += mov * wB) : (alvo.andar += mov * wB));
+      (this.loco.lateralE ? (alvo.lateralE += mov * wL) : (alvo.andar += mov * wL));
+      (this.loco.lateralD ? (alvo.lateralD += mov * wR) : (alvo.andar += mov * wR));
+    }
+    const k = 1 - Math.exp(-dt * 10);
+    for (const n of Object.keys(this.loco)) this.pesosLoco[n] += (alvo[n] - this.pesosLoco[n]) * k;
+
+    // Fase comum dos ciclos: cada ciclo pede a velocidade "real / passada"; mistura pelos pesos.
+    let taxa = 0, soma = 0;
+    for (const n of CICLOS) {
+      const w = this.pesosLoco[n];
+      if (!this.loco[n] || w < 0.001) continue;
+      const clip = this.clipes[n];
+      const passada = clip.userData?.passada || 1.5;
+      const veloc = n === 'virar' ? Math.max(Math.abs(giro) * 0.4, 0.4) : Math.max(v, 0.3);
+      taxa += w * (veloc / passada) / clip.duration;
+      soma += w;
+    }
+    if (soma > 0) {
+      if (this.variacao) this.ritmo += ((1 + (Math.random() * 2 - 1) * this.variacao) - this.ritmo) * Math.min(1, dt * 3);
+      this.fase = (this.fase + (taxa / soma) * dt * this.ritmo) % 1;
+    }
+    for (const n of CICLOS) if (this.loco[n]) this.loco[n].time = this.fase * this.clipes[n].duration;
 
     // Camada de ação
     const passo = dt / this.fade;
@@ -191,7 +289,20 @@ export class Animador {
     }
     if (this.anterior) this.anterior.action.setEffectiveWeight(pAnt);
     const pLoco = Math.max(0, 1 - pAcao - pAnt);
-    for (const n of Object.keys(this.loco)) this.loco[n].setEffectiveWeight((this.pesosLoco[n] / somaLoco) * pLoco);
+    const somaLoco = Object.values(this.pesosLoco).reduce((s, x) => s + Math.max(0, x), 0) || 1;
+    // Quanto da pose atual vem dos ciclos de passo (para o IK saber se pode travar pelo ciclo)
+    this.pCiclos = (CICLOS.reduce((s, n) => s + Math.max(0, this.pesosLoco[n] ?? 0), 0) / somaLoco) * pLoco;
+    this.pLoco = pLoco;
+    for (const n of Object.keys(this.loco)) this.loco[n].setEffectiveWeight((Math.max(0, this.pesosLoco[n]) / somaLoco) * pLoco);
+
+    // Camada superior aditiva (some quando uma ação de corpo inteiro assume)
+    if (this.sup) {
+      const s = this.sup;
+      const alvoSup = s.alvo * (1 - pAcao);
+      s.peso += Math.sign(alvoSup - s.peso) * Math.min(Math.abs(alvoSup - s.peso), dt / Math.max(0.0001, s.fade));
+      s.action.setEffectiveWeight(s.peso);
+      if (s.alvo === 0 && s.peso <= 0) { s.action.stop(); this.sup = null; }
+    }
     this.mixer.update(dt);
   }
 }
