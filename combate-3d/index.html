@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Treino de combate</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="src/styles.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="tela" aria-label="Cena 3D: herói de espada e escudo treinando contra um adversário"></canvas>
+
+  <header class="hud">
+    <h1 class="hud__titulo">Treino de combate</h1>
+    <dl class="placar">
+      <div><dt>Acertos</dt><dd id="p-acertos">0</dd></div>
+      <div><dt>Defesas</dt><dd id="p-defesas">0</dd></div>
+      <div><dt>Golpes levados</dt><dd id="p-sofridos">0</dd></div>
+    </dl>
+  </header>
+
+  <div id="aviso" class="aviso" aria-live="polite"></div>
+
+  <footer class="controles">
+    <div class="controles__acoes">
+      <button id="btn-atacar" class="btn btn--acao" type="button">Atacar <kbd>J</kbd></button>
+      <button id="btn-defender" class="btn btn--acao" type="button">Defender <kbd>K</kbd></button>
+    </div>
+    <div class="controles__opcoes">
+      <button id="btn-demo" class="btn" type="button" aria-pressed="false">Demonstração</button>
+      <button id="btn-esqueleto" class="btn" type="button" aria-pressed="false">Mostrar esqueleto</button>
+      <button id="btn-poseT" class="btn" type="button" aria-pressed="false">Pose T</button>
+    </div>
+    <p class="dica">Atacar: <kbd>J</kbd> ou <kbd>Espaço</kbd>, aperte de novo no meio do golpe para emendar até 3 cortes.
+      Defender: segure <kbd>K</kbd> ou <kbd>Shift</kbd> quando a espada do adversário brilhar.
+      Arraste a cena para girar a câmera.</p>
+  </footer>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
