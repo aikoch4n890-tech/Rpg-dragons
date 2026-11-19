@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { criarGoblin, criarMorcego } from './goblin.js';
 import { criarClipesGoblin } from './animGoblin.js';
 import { criarPersonagem } from '../rig.js';
+import { criarHeroiBloco, criarGoblinBloco } from '../modelosBloco.js';
 import { criarClipesGuerreiro } from './animGuerreiro.js';
 
 const tela = document.getElementById('tela');
@@ -37,14 +38,15 @@ function adicionar(rig, clipes, x) {
 }
 
 const so = new URLSearchParams(location.search).get('so'); // ?so=heroi ou ?so=goblin
+const classico = new URLSearchParams(location.search).get('estilo') === 'classico'; // padrão: modelos em blocos
 const clipesPorArma = {};
 const tipos = [['goblin', -3.4], ['batedor', -2.1], ['escudeiro', -0.8], ['bruto', 1.6]];
 for (const [tipo, x] of so && so !== 'goblins' ? tipos.filter(([t]) => t === so) : so === 'heroi' ? [] : tipos) {
-  const g = criarGoblin(tipo, 21 + x * 10);
+  const g = classico ? criarGoblin(tipo, 21 + x * 10) : criarGoblinBloco(tipo, 21 + x * 10);
   clipesPorArma[g.tipoArma] ||= criarClipesGoblin(g.tipoArma);
   adicionar(g, clipesPorArma[g.tipoArma], x);
 }
-const heroi = criarPersonagem();
+const heroi = classico ? criarPersonagem() : criarHeroiBloco();
 if (!so || so === 'heroi') adicionar(heroi, criarClipesGuerreiro(), so === 'heroi' ? 0 : 3.6);
 const morcego = criarMorcego();
 morcego.raiz.position.set(0.4, 2.6, 0);

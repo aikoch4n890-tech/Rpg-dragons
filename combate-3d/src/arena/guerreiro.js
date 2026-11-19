@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { criarPersonagem } from '../rig.js';
+import { criarHeroiBloco } from '../modelosBloco.js';
 import { Corpo, Animador } from './corpo.js';
 import { Partes, RastroArma, calcularDano, anguloAtaque } from './golpes.js';
 import { POR_ID, ATAQUES_BASICOS } from './habilidades.js';
@@ -13,7 +14,7 @@ import { IKPes } from '../ik.js';
 import { escolherReacao } from '../reacoes.js';
 
 const PARTES_HEROI = [
-  { nome: 'cabeça', osso: 'Head', offset: [0, 0.13, 0.01], raio: 0.13, mult: 1.2 },
+  { nome: 'cabeça', osso: 'Head', offset: [0, 0.15, 0.01], raio: 0.15, mult: 1.2 },
   { nome: 'tronco', osso: 'Spine1', offset: [0, 0.08, 0], raio: 0.22, mult: 1 },
   { nome: 'abdômen', osso: 'Spine', offset: [0, 0.05, 0], raio: 0.2, mult: 1 },
   { nome: 'quadril', osso: 'Hips', offset: [0, -0.04, 0], raio: 0.21, mult: 1 },
@@ -30,7 +31,7 @@ export class Guerreiro {
   constructor(ctx) {
     this.ctx = ctx;
     this.progresso = ctx.progresso;
-    this.rig = criarPersonagem();
+    this.rig = ctx.estiloModelos === 'classico' ? criarPersonagem() : criarHeroiBloco(); // modelos em blocos (padrão) ou os primeiros
     ctx.cena.add(this.rig.raiz);
     this.corpo = new Corpo(this.rig.raiz, CONFIG.guerreiro.raio, 3);
     this.anim = new Animador(this.rig.raiz, ctx.clipes);

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { aleatorio, material, materialCouro, peca, cilindro, construirEsqueleto, construirEscudo } from '../rig.js';
 
 // Proporções do goblin: cerca de 1,2 m contando as orelhas, cabeça grande e membros finos.
-const OSSOS_GOBLIN = [
+export const OSSOS_GOBLIN = [
   ['Hips', null, [0, 0.65, 0]],
   ['Spine', 'Hips', [0, 0.06, 0]],
   ['Spine1', 'Spine', [0, 0.14, 0]],
@@ -107,7 +107,7 @@ function construirPernaGoblin(ossos, lado, M) {
 }
 
 // Armas dos goblins. Todas apontam para +Z da mão; base e ponta servem para a hitbox.
-function construirArma(mao, tipo) {
+export function construirArma(mao, tipo) {
   const g = new THREE.Group();
   g.position.set(0, -0.035, 0);
   mao.add(g);

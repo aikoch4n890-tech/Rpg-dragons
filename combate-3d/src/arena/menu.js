@@ -366,6 +366,12 @@ export class Menu {
     cam.setAttribute('aria-pressed', String(c.cameraAuto));
     linha.appendChild(cam);
     linha.appendChild(this.botao(`Velocidade: ${T.velocidade}x`, () => { T.setVelocidade(T.velocidade === 1 ? 2 : T.velocidade === 2 ? 0.5 : 1); this.render(); }));
+    const estilo = c.modelos || 'bloco';
+    linha.appendChild(this.botao(`Modelos: ${estilo === 'bloco' ? 'em blocos' : 'clássicos'} (recarrega)`, () => {
+      c.modelos = estilo === 'bloco' ? 'classico' : 'bloco';
+      this.p.salvar();
+      location.reload();
+    }));
     this.conteudo.appendChild(linha);
 
     this.html('<h3 class="menu-titulo menu-titulo--menor">Área de teste</h3><p class="menu-sub">Gere monstros específicos para testar o comportamento do Guerreiro. Feche o menu para ver a luta.</p>');

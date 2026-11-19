@@ -64,6 +64,7 @@ let velocidadeJogo = 1;
 
 const ctx = {
   cena, mundo, efeitos, audio, progresso, controle,
+  estiloModelos: progresso.dados.config.modelos || 'bloco', // 'bloco' (referências novas) ou 'classico'
   clipes: clipesHeroi,
   clipesGoblin,
   inimigos: () => inimigos,

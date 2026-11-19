@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { criarGoblin, criarMorcego } from './goblin.js';
+import { criarGoblinBloco } from '../modelosBloco.js';
 import { ATAQUES_GOBLIN } from './animGoblin.js';
 import { Corpo, Animador } from './corpo.js';
 import { Partes, RastroArma, calcularDano, decidirReacao, anguloAtaque } from './golpes.js';
@@ -12,7 +13,7 @@ import { IKPes, doisOssos } from '../ik.js';
 import { escolherReacao } from '../reacoes.js';
 
 const PARTES_GOBLIN = [
-  { nome: 'cabeça', osso: 'Head', offset: [0, 0.12, 0.01], raio: 0.13, mult: 1.35, fraca: true },
+  { nome: 'cabeça', osso: 'Head', offset: [0, 0.14, 0.02], raio: 0.15, mult: 1.35, fraca: true },
   { nome: 'tronco', osso: 'Spine1', offset: [0, 0.05, 0], raio: 0.17, mult: 1 },
   { nome: 'quadril', osso: 'Hips', offset: [0, -0.05, 0], raio: 0.15, mult: 0.9 },
   { nome: 'pernas', osso: 'LeftLeg', offset: [-0.07, -0.05, 0], raio: 0.13, mult: 0.8 },
@@ -72,7 +73,7 @@ export class Inimigo {
     this.def = TIPOS[tipo];
     this.ctx = ctx;
     this.id = proximoId++;
-    this.rig = criarGoblin(tipo, 17 + this.id * 3);
+    this.rig = ctx.estiloModelos === 'classico' ? criarGoblin(tipo, 17 + this.id * 3) : criarGoblinBloco(tipo, 17 + this.id * 3);
     this.escala = this.def.escala || 1;
     this.rig.raiz.position.copy(pos);
     ctx.cena.add(this.rig.raiz);
